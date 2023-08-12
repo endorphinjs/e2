@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "test": "uvu ./test -i samples"
+    "test": "uvu -r tsm ./test -i samples"
   },
   "devDependencies": {
     "@types/estraverse": "^5.1.2",
