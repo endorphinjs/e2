@@ -6,7 +6,8 @@ type PropInfo = [propName: string, propType: PropType];
 
 interface SymbolAnalysisResult {
     scope: Scope;
-    template?: Scope;
+    template?: ESTree.TaggedTemplateExpression;
+    templateScope?: Scope;
 }
 
 /**
@@ -31,9 +32,9 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
     const parents: ESTree.Node[] = [];
     const scopeStack: Scope[]  = [];
     let rootScope: Scope | null = null;
-    let templateScope: Scope | null;
+    let template: ESTree.TaggedTemplateExpression | undefined;
+    let templateScope: Scope | undefined;
 
-    //
     /*
     TODO строить зависимости на вызов функций:
     defineComponent(({ foo, bar }) => {
@@ -51,6 +52,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
         enter(node, parent) {
             if (ctx.isTemplate(node)) {
                 templateScope = new Scope();
+                template = node;
                 scopeStack.push(templateScope);
             } else if (isBlockEnter(node, parent)) {
                 // Зашли в блок со своей областью видимости
@@ -144,7 +146,8 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
 
     return {
         scope: rootScope!,
-        template: templateScope!
+        template,
+        templateScope
     };
 }
 

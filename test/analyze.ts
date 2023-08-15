@@ -70,12 +70,12 @@ test('Computed refs', () => {
 
 test('Template variables', async () => {
     const file = await fs.readFile('./test/samples/MyComponent.js', 'utf8');
-    const { scope, template } = analyze(file);
-    if (!template) {
+    const { scope, templateScope } = analyze(file);
+    if (!templateScope) {
         throw new Error('No template scope');
     }
-    equal(keys(template, 'usages'), ['innerValue', 'enabled', 'uppercaseFullName', 'fullName', 'name', 'items', 'item', 'onItemClick']);
-    equal(keys(template, 'updates'), ['innerValue']);
+    equal(keys(templateScope, 'usages'), ['innerValue', 'enabled', 'uppercaseFullName', 'fullName', 'name', 'items', 'item', 'onItemClick']);
+    equal(keys(templateScope, 'updates'), ['innerValue']);
 
     equal(keys(scope, 'dependencies'), ['fullName', 'uppercaseFullName']);
     equal(scope.dependencies.get('fullName'), new Set(['enabled', 'name']));
