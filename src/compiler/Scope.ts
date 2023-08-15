@@ -14,13 +14,19 @@ export default class Scope {
      * где первый элемент – это название пропса, а второй — тип использования пропса
      */
     props = new Map<string, PropInfo>();
+    /** Символы, которые *были объявлены* внутри текущего скоупа */
     declarations = new Map<string, ESTree.Node>();
+    /** Символы, которые *считываются* внутри текущего скоупа */
     usages = new Map<string, ESTree.Node[]>();
+    /** Символы, которые *обновляются* внутри текущего скоупа */
     updates = new Map<string, ESTree.Node[]>();
-    // Зависимости computed-переменных
+
+    /** Зависимости computed-переменных */
     dependencies = new Map<string, Set<string>>();
 
     private computedStack: string[] = [];
+    /** Символы, которые были сгенерированы компилятором */
+    private issued = new Map<string, number>();
 
     addDeclaration(name: string, node: ESTree.Node) {
         this.declarations.set(name, node);
@@ -65,6 +71,9 @@ export default class Scope {
         }
     }
 
+    /**
+     * Перенос данных из указанного `scope` в текущий
+     */
     transfer(scope: Scope) {
         const computed = last(this.computedStack);
 
@@ -107,5 +116,29 @@ export default class Scope {
         if (this.declarations.has(name)) {
             return this.props.get(name)?.[1];
         }
+    }
+
+    /**
+     * Создаёт новый идентификатор символа для скоупа, который гарантированно
+     * не будет пересекаться с уже имеющимися или используемыми внутри скоупа
+     */
+    id(name: string): string {
+        let counter = this.issued.get(name) || 0;
+        let id = '';
+        do {
+            id = name + (counter++ || '');
+        } while(!this.has(id));
+        this.issued.set(name, counter);
+        return id;
+    }
+
+    /**
+     * Вернёт `true` если указанный идентификатор используется в скоупе (без учёта
+     * сгенерированных)
+     */
+    has(id: string): boolean {
+        return this.declarations.has(id)
+            || this.updates.has(id)
+            || this.usages.has(id);
     }
 }
