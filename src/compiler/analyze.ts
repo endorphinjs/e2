@@ -1,4 +1,4 @@
-import type { AssignmentExpression, CallExpression, Function, Identifier, Node, ObjectPattern, Pattern, TaggedTemplateExpression, UpdateExpression, VariableDeclaration, VariableDeclarator } from 'estree';
+import type * as ESTree from 'estree';
 import { traverse } from 'estraverse';
 
 type PropType = 'prop' | 'container' | 'rest';
@@ -12,8 +12,8 @@ interface SymbolAnalysisResult {
 /**
  * Вернёт список узлов, которые содержат описания коллбэки для описания компонента
  */
-export function findComponentCallbacks(program: Node, ctx = new EndorphinContext()): Node[] {
-    const result: Node[] = [];
+export function findComponentCallbacks(program: ESTree.Node, ctx = new EndorphinContext()): ESTree.Node[] {
+    const result: ESTree.Node[] = [];
 
     traverse(program, {
         enter(node) {
@@ -27,8 +27,8 @@ export function findComponentCallbacks(program: Node, ctx = new EndorphinContext
     return result;
 }
 
-export function runSymbolAnalysis(root: Node, ctx = new EndorphinContext()): SymbolAnalysisResult {
-    const parents: Node[] = [];
+export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext()): SymbolAnalysisResult {
+    const parents: ESTree.Node[] = [];
     const scopeStack: Scope[]  = [];
     let rootScope: Scope | null = null;
     let templateScope: Scope | null;
@@ -158,19 +158,19 @@ export class Scope {
      * где первый элемент – это название пропса, а второй — тип использования пропса
      */
     props = new Map<string, PropInfo>();
-    declarations = new Map<string, Node>();
-    usages = new Map<string, Node[]>();
-    updates = new Map<string, Node[]>();
+    declarations = new Map<string, ESTree.Node>();
+    usages = new Map<string, ESTree.Node[]>();
+    updates = new Map<string, ESTree.Node[]>();
     // Зависимости computed-переменных
     dependencies = new Map<string, Set<string>>();
 
     private computedStack: string[] = [];
 
-    addDeclaration(name: string, node: Node) {
+    addDeclaration(name: string, node: ESTree.Node) {
         this.declarations.set(name, node);
     }
 
-    addUsage(name: string, node: Node) {
+    addUsage(name: string, node: ESTree.Node) {
         const arr = this.usages.get(name);
         if (arr) {
             arr.push(node);
@@ -179,7 +179,7 @@ export class Scope {
         }
     }
 
-    addUpdate(name: string, node: Node) {
+    addUpdate(name: string, node: ESTree.Node) {
         const arr = this.updates.get(name);
         if (arr) {
             arr.push(node);
@@ -197,7 +197,7 @@ export class Scope {
         }
     }
 
-    add(name: string, node?: Node | null) {
+    add(name: string, node?: ESTree.Node | null) {
         switch (node?.type) {
             case 'VariableDeclaration':
                 return this.addDeclaration(name, node);
@@ -254,7 +254,7 @@ export class Scope {
     }
 }
 
-function getDeclaredNames(node: Pattern): string[] {
+function getDeclaredNames(node: ESTree.Pattern): string[] {
     switch (node.type) {
         case 'Identifier':
             return [node.name];
@@ -269,7 +269,7 @@ function getDeclaredNames(node: Pattern): string[] {
     return [];
 }
 
-function isFunctionDeclaration(node: Node): node is Function {
+function isFunctionDeclaration(node: ESTree.Node): node is ESTree.Function {
     return node.type === 'ArrowFunctionExpression'
         || node.type === 'FunctionExpression'
         || node.type === 'FunctionDeclaration';
@@ -279,13 +279,13 @@ function isFunctionDeclaration(node: Node): node is Function {
  * Обрабатывает указатель на идентификатор. Если вернёт `false`, значит, функция
  * не смогла или не захотела определять контекст этого идентификатора
  */
-function handleIdentifier(scope: Scope, node: Identifier, parents: Node[]): void {
+function handleIdentifier(scope: Scope, node: ESTree.Identifier, parents: ESTree.Node[]): void {
     const parent = last(parents);
 
     const isFunctionParam = () => {
         const ix = findLastIndex(parents, isFunctionDeclaration);
         return ix !== -1
-            ? (parents[ix] as Function).params.includes(parents[ix + 1] as Pattern)
+            ? (parents[ix] as ESTree.Function).params.includes(parents[ix + 1] as ESTree.Pattern)
             : false;
     }
 
@@ -391,18 +391,18 @@ function handleIdentifier(scope: Scope, node: Identifier, parents: Node[]): void
     }
 }
 
-function declareOrAssign(node: Node): node is VariableDeclaration | AssignmentExpression | UpdateExpression {
+function declareOrAssign(node: ESTree.Node): node is ESTree.VariableDeclaration | ESTree.AssignmentExpression | ESTree.UpdateExpression {
     return node.type === 'VariableDeclaration'
         || node.type === 'AssignmentExpression'
         || node.type === 'UpdateExpression';
 }
 
-function isBlockEnter(node: Node, parent: Node | null): boolean {
+function isBlockEnter(node: ESTree.Node, parent: ESTree.Node | null): boolean {
     return node.type === 'BlockStatement'
         || (parent?.type === 'ArrowFunctionExpression' && node === parent.body);
 }
 
-function collectPropsFromFunction(fn: Function, scope: Scope) {
+function collectPropsFromFunction(fn: ESTree.Function, scope: Scope) {
     const param = fn.params[0];
     if (!param) {
         return;
@@ -415,7 +415,7 @@ function collectPropsFromFunction(fn: Function, scope: Scope) {
     }
 }
 
-function propsFromObjectPattern(obj: ObjectPattern, scope: Scope) {
+function propsFromObjectPattern(obj: ESTree.ObjectPattern, scope: Scope) {
     for (const p of obj.properties) {
         // XXX поддержать больше сложных паттернов деструктуризации
         if (p.type === 'RestElement') {
@@ -465,7 +465,7 @@ class EndorphinContext {
         };
     }
 
-    isComponentFactory(node: Node): node is CallExpression {
+    isComponentFactory(node: ESTree.Node): node is ESTree.CallExpression {
         if (node.type === 'CallExpression' && node.arguments.length) {
             const { callee } = node;
             return callee.type === 'Identifier'
@@ -475,14 +475,14 @@ class EndorphinContext {
         return false
     }
 
-    isComputed(node: Node, parent: Node | null): parent is VariableDeclarator {
+    isComputed(node: ESTree.Node, parent: ESTree.Node | null): parent is ESTree.VariableDeclarator {
         return node.type === 'CallExpression'
             && node.callee.type === 'Identifier'
             && node.callee.name === this.options.computed
             && parent?.type === 'VariableDeclarator';
     }
 
-    isTemplate(node: Node): node is TaggedTemplateExpression {
+    isTemplate(node: ESTree.Node): node is ESTree.TaggedTemplateExpression {
         return node.type === 'TaggedTemplateExpression'
             && node.tag.type === 'Identifier'
             && node.tag.name === this.options.template;
