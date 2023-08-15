@@ -33,6 +33,20 @@ export function runSymbolAnalysis(root: Node, ctx = new EndorphinContext()): Sym
     let rootScope: Scope | null = null;
     let templateScope: Scope | null;
 
+    //
+    /*
+    TODO строить зависимости на вызов функций:
+    defineComponent(({ foo, bar }) => {
+        function getName() {
+            return foo + bar;
+        }
+
+        return html`<div>${getName()}</div>`;
+    });
+    В этом случае нужно указать, что шаблон зависит от `foo` и `bar`, а также сам
+    вызов `getName()` (dirty-флаг)
+    */
+
     traverse(root, {
         enter(node, parent) {
             if (ctx.isTemplate(node)) {

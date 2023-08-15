@@ -64,6 +64,7 @@ class TemplateStack {
         this.root = {
             type: 'ENDTemplate',
             body: [],
+            events: [],
             start: code.start,
             end: code.end
         };
@@ -92,6 +93,10 @@ class TemplateStack {
                     ? statementFactory[controlName](node)
                     : elementStatement(node);
 
+                if (elem.type === 'ENDElement') {
+                    this.storeEventHandlers(elem);
+                }
+
                 if (ifElem) {
                     appendChild(this.ptr, ifElem);
                     appendChild(ifElem, elem);
@@ -116,6 +121,35 @@ class TemplateStack {
             appendChild(this.ptr, node);
         }
     }
+
+    private storeEventHandlers(element: AST.ENDElement) {
+        let privateScope: Set<string> | undefined;
+        const { events } = this.root;
+        for (const handler of element.directives) {
+            if (handler.prefix === '@') {
+                if (!privateScope) {
+                    privateScope = this.getPrivateScope();
+                }
+                events.push({ element, handler, privateScope });
+            }
+        }
+    }
+
+    /**
+     * Returns private scope symbols from current template stack
+     */
+    private getPrivateScope(): Set<string> {
+        const result = new Set<string>();
+        for (const node of this.stack) {
+            if (node.type === 'ENDForEachStatement') {
+                if (node.indexName) result.add(node.indexName);
+                if (node.keyName)   result.add(node.keyName);
+                if (node.valueName) result.add(node.valueName);
+            }
+        }
+
+        return result;
+    }
 }
 
 function attributeStatement(tag: AST.ParsedTag): AST.ENDAttributeStatement {
@@ -128,7 +162,7 @@ function attributeStatement(tag: AST.ParsedTag): AST.ENDAttributeStatement {
     };
 }
 
-function elementStatement(tag: AST.ParsedTag): AST.ENDStatement {
+function elementStatement(tag: AST.ParsedTag): AST.ENDElement {
     for (const directive of tag.directives) {
         if (directive.prefix === 'class' && directive.value !== null) {
             assertExpressionValue(directive);

@@ -55,6 +55,8 @@ export type ENDElementStatement = ENDElementStatementMap[keyof ENDElementStateme
 export interface ENDTemplate extends ENDNode {
     type: 'ENDTemplate';
     body: ENDStatement[];
+    /** All event handlers defined in template */
+    events: EventHandlerData[];
 }
 
 export interface ENDElement extends ENDNode {
@@ -129,4 +131,16 @@ export interface ParsedTag extends ENDNode {
     directives: ENDDirective[];
     tagType: 'open' | 'close';
     selfClosing?: boolean;
+}
+
+export interface EventHandlerData {
+    /** Event handler pointer */
+    handler: ENDDirective;
+    /** Element containing event handler */
+    element: ENDElement;
+    /**
+     * Private scope symbols for event handler: runtime variables from template
+     * blocks. For example `as` attribute identifier from `<for-each>` statement
+     */
+    privateScope: Set<string>;
 }
