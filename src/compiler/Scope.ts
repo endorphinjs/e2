@@ -25,8 +25,12 @@ export default class Scope {
     dependencies = new Map<string, Set<string>>();
 
     private computedStack: string[] = [];
+
     /** Символы, которые были сгенерированы компилятором */
-    private issued = new Map<string, number>();
+    private issued = new Set<string>();
+
+    /** Счётчик для сгенерированных символов */
+    private issuedCounter = new Map<string, number>();
 
     addDeclaration(name: string, node: ESTree.Node) {
         this.declarations.set(name, node);
@@ -123,12 +127,13 @@ export default class Scope {
      * не будет пересекаться с уже имеющимися или используемыми внутри скоупа
      */
     id(name: string): string {
-        let counter = this.issued.get(name) || 0;
+        let counter = this.issuedCounter.get(name) || 0;
         let id = '';
         do {
             id = name + (counter++ || '');
-        } while(!this.has(id));
-        this.issued.set(name, counter);
+        } while(this.has(id));
+        this.issuedCounter.set(name, counter);
+        this.issued.add(id);
         return id;
     }
 
@@ -139,6 +144,7 @@ export default class Scope {
     has(id: string): boolean {
         return this.declarations.has(id)
             || this.updates.has(id)
-            || this.usages.has(id);
+            || this.usages.has(id)
+            || this.issued.has(id);
     }
 }

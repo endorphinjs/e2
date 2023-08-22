@@ -20,3 +20,7 @@ export function at<T>(arr: T[], offset: number): T | undefined {
 export function last<T>(arr: T[]): T | undefined {
     return arr[arr.length - 1];
 }
+
+export function capitalize(str: string): string {
+    return str[0].toUpperCase() + str.slice(1);
+}

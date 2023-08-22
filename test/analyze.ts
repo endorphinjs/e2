@@ -3,7 +3,8 @@ import { suite } from 'uvu';
 import { equal } from 'uvu/assert';
 import { parse } from 'acorn';
 import type { Node } from 'estree';
-import { findComponentCallbacks, runSymbolAnalysis, Scope } from '../src/compiler/analyze';
+import { findComponentCallbacks, runSymbolAnalysis } from '../src/compiler/analyze';
+import Scope from '../src/compiler/Scope';
 
 const test = suite('Symbol analysis');
 
@@ -70,12 +71,12 @@ test('Computed refs', () => {
 
 test('Template variables', async () => {
     const file = await fs.readFile('./test/samples/MyComponent.js', 'utf8');
-    const { scope, templateScope } = analyze(file);
-    if (!templateScope) {
+    const { scope, template } = analyze(file);
+    if (!template) {
         throw new Error('No template scope');
     }
-    equal(keys(templateScope, 'usages'), ['innerValue', 'enabled', 'uppercaseFullName', 'fullName', 'name', 'items', 'item', 'onItemClick']);
-    equal(keys(templateScope, 'updates'), ['innerValue']);
+    equal(keys(template.scope, 'usages'), ['innerValue', 'enabled', 'uppercaseFullName', 'fullName', 'name', 'items', 'item', 'onItemClick']);
+    equal(keys(template.scope, 'updates'), ['innerValue']);
 
     equal(keys(scope, 'dependencies'), ['fullName', 'uppercaseFullName']);
     equal(scope.dependencies.get('fullName'), new Set(['enabled', 'name']));

@@ -1,12 +1,20 @@
 import type * as ESTree from 'estree';
 import { traverse } from 'estraverse';
 import Scope from './Scope';
+import EndorphinContext from './EndorphinContext';
 import { at, findLast, findLastIndex, last } from '../shared/utils';
 
-interface SymbolAnalysisResult {
+export interface SymbolAnalysisResult {
     scope: Scope;
-    template?: ESTree.TaggedTemplateExpression;
-    templateScope?: Scope;
+    /** Скоупы для функций, объявленных внутри фабрики */
+    fnScopes: Map<ESTree.Function, Scope>;
+    template?: SymbolAnalysisTemplate;
+}
+
+export interface SymbolAnalysisTemplate {
+    ast: ESTree.TaggedTemplateExpression;
+    scope: Scope;
+    entry: ESTree.Node;
 }
 
 /**
@@ -30,9 +38,9 @@ export function findComponentCallbacks(program: ESTree.Node, ctx = new Endorphin
 export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext()): SymbolAnalysisResult {
     const parents: ESTree.Node[] = [];
     const scopeStack: Scope[]  = [];
+    const fnScopes = new Map<ESTree.Function, Scope>();
     let rootScope: Scope | null = null;
-    let template: ESTree.TaggedTemplateExpression | undefined;
-    let templateScope: Scope | undefined;
+    let template: SymbolAnalysisTemplate | undefined;
 
     /*
     TODO строить зависимости на вызов функций:
@@ -50,15 +58,19 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
     traverse(root, {
         enter(node, parent) {
             if (ctx.isTemplate(node)) {
-                templateScope = new Scope();
-                template = node;
-                scopeStack.push(templateScope);
+                template = {
+                    ast: node,
+                    scope: new Scope(),
+                    entry: getTemplateEntry(this.parents())
+                };
+                scopeStack.push(template.scope);
             } else if (isBlockEnter(node, parent)) {
                 // Зашли в блок со своей областью видимости
                 const scope = new Scope();
                 scopeStack.push(scope);
                 if (parent) {
                     if (isFunctionDeclaration(parent)) {
+                        fnScopes.set(parent, scope);
                         // Это тело функции: добавим все аргументы функции в новый скоуп
                         for (const param of parent.params) {
                             for (const name of getDeclaredNames(param)) {
@@ -145,12 +157,10 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
 
     return {
         scope: rootScope!,
-        template,
-        templateScope
+        fnScopes,
+        template
     };
 }
-
-
 
 function getDeclaredNames(node: ESTree.Pattern): string[] {
     switch (node.type) {
@@ -167,7 +177,7 @@ function getDeclaredNames(node: ESTree.Pattern): string[] {
     return [];
 }
 
-function isFunctionDeclaration(node: ESTree.Node): node is ESTree.Function {
+export function isFunctionDeclaration(node: ESTree.Node): node is ESTree.Function {
     return node.type === 'ArrowFunctionExpression'
         || node.type === 'FunctionExpression'
         || node.type === 'FunctionDeclaration';
@@ -329,60 +339,17 @@ function propsFromObjectPattern(obj: ESTree.ObjectPattern, scope: Scope) {
     }
 }
 
-/**
- * Символы из шаблона, отсортированные для лучшего упаковывания в маску изменений
- */
-function sortedTemplateSymbols(scope: Scope, symbols: string[]): string[] {
-    // Символы, которые обновляются, нужно подтянуть ближе к началу, чтобы они
-    // уместились в ограничение маски 2^31 - 1
-    const lookup = new Map<string, number>();
-    symbols.forEach((name, ix) => lookup.set(name, ix));
-    const hasUpdate = (name: string) => scope.updates.has(name) && scope.declarations.has(name);
-    return symbols.slice().sort((a, b) => {
-        const updateA = hasUpdate(a) ? 1 : 0;
-        const updateB = hasUpdate(b) ? 1 : 0;
-        return (updateA - updateB) || (lookup.get(a)! - lookup.get(b)!);
-    });
-}
-
-interface EndorphinContextOptions {
-    component: string;
-    computed: string;
-    template: string;
-}
-
-class EndorphinContext {
-    private options: EndorphinContextOptions;
-
-    constructor(options?: Partial<EndorphinContextOptions>) {
-        this.options = {
-            component: 'defineComponent',
-            computed: 'computed',
-            template: 'html',
-            ...options
-        };
-    }
-
-    isComponentFactory(node: ESTree.Node): node is ESTree.CallExpression {
-        if (node.type === 'CallExpression' && node.arguments.length) {
-            const { callee } = node;
-            return callee.type === 'Identifier'
-                && callee.name === this.options.component;
+function getTemplateEntry(parents: ESTree.Node[]): ESTree.Node {
+    const ix = parents.findIndex(node => isFunctionDeclaration(node));
+    if (ix !== -1) {
+        let next = parents[ix + 1];
+        if (next?.type === 'BlockStatement') {
+            return parents[ix + 2] || next;
         }
 
-        return false
+        return next || parents[ix];
     }
 
-    isComputed(node: ESTree.Node, parent: ESTree.Node | null): parent is ESTree.VariableDeclarator {
-        return node.type === 'CallExpression'
-            && node.callee.type === 'Identifier'
-            && node.callee.name === this.options.computed
-            && parent?.type === 'VariableDeclarator';
-    }
-
-    isTemplate(node: ESTree.Node): node is ESTree.TaggedTemplateExpression {
-        return node.type === 'TaggedTemplateExpression'
-            && node.tag.type === 'Identifier'
-            && node.tag.name === this.options.template;
-    }
+    // Shouldn’t be here
+    return parents[0];
 }
