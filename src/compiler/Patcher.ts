@@ -111,6 +111,26 @@ export default class Patcher {
     substr(node: ESTree.Node): string {
         return this.code.slice(node.start, node.end);
     }
+
+    /**
+     * Возвращает строку-отступ для указанной позиции
+     */
+    indent(pos: number): string {
+        const { code } = this;
+        const end = pos;
+        const reSpace = /\s/;
+        while (pos > 0 && reSpace.test(code[pos - 1])) {
+            pos--;
+            if (code[pos] === '\r' && code[pos - 1] === '\n') {
+                pos--;
+            }
+            if (code[pos] === '\n') {
+                break;
+            }
+        }
+
+        return code.slice(pos, end);
+    }
 }
 
 /**

@@ -1,7 +1,7 @@
 import type * as ESTree from 'estree';
 import Context from './Context';
 import Scope from './Scope';
-import { SymbolAnalysisResult, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
+import { SymbolAnalysisResult, TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
 import parse, { type AST } from '../parser';
 import Patcher, { patcherFromNode, type NodeMapping } from './Patcher';
 import { capitalize } from '../shared/utils';
@@ -10,6 +10,8 @@ import { capitalize } from '../shared/utils';
  * Поддерживаемые модификаторы событий
  */
 const supportedModifiers = new Set(['stop', 'stopPropagation', 'prevent', 'preventDefault', 'passive']);
+const setupArg = 'setup';
+const invalidateArg = 'invalidate';
 
 /**
  * Декларация компонента: его внутренний скоуп и патчи для финального кода
@@ -25,13 +27,15 @@ export default class ComponentDeclaration {
     private chunks: string[] = [];
     private _invalidateSymbol: string | undefined;
     private scopeSymbols = new Map<string, number>();
+    private templateSrc?: TemplateSource;
 
-    constructor(public ctx: Context, node: ESTree.Function) {
+    constructor(public ctx: Context, public node: ESTree.Function) {
         const { scope, fnScopes, template } = runSymbolAnalysis(node, ctx.endorphin);
         this.scope = scope;
         this.fnScopes = fnScopes;
 
         if (template) {
+            this.templateSrc = template;
             this.template = {
                 ast: parse(template.ast.quasi),
                 entry: template.entry
@@ -40,55 +44,56 @@ export default class ComponentDeclaration {
             for (const symbol of getTemplateSymbols(scope, template.scope)) {
                 this.pushSymbol(symbol);
             }
-
-            // Компилируем все обработчики событий
-            for (const event of this.template.ast.events) {
-                this.compileEventHandler(event.handler, template.scope);
-            }
         }
     }
 
     private get invalidateSymbol(): string {
         if (!this._invalidateSymbol) {
-            this._invalidateSymbol = this.scope.id('invalidate');
+            this._invalidateSymbol = this.scope.id(invalidateArg);
         }
 
         return this._invalidateSymbol;
     }
 
     /**
-     * Применяет все необходимые патчи для правильного рендеринга компонента
+     * Компилирует текущие компонент и записывает все изменения в указанный патчер
      */
-    public applyPatches(patcher: Patcher) {
-        // Патчим все обновления внутри компонента
-        const { updates, declarations } = this.scope;
-        const { template } = this;
-
-        if (!template) {
+    public compile(patcher: Patcher) {
+        const { template, templateSrc, scope } = this;
+        if (!template || !templateSrc) {
             return;
         }
 
-        for (const [symbol, nodes] of updates) {
-            const index = this.scopeSymbols.get(symbol);
-            if (declarations.has(symbol) && index != null) {
+        // Компилируем все обработчики событий
+        for (const event of template.ast.events) {
+            this.compileEventHandler(event.handler);
+        }
+
+        // Патчим обновления переменных
+        for (const [symbol, nodes] of scope.updates) {
+            if (this.shouldInvalidate(symbol)) {
                 for (const node of nodes) {
                     this.patchInvalidate(patcher, symbol, node);
                 }
             }
         }
 
+        // Код для связывания данных внутри компонента
+        const patch = this.bootstrap();
+        if (patch) {
+            patcher.append(patch.pos, patch.text);
+        }
+
+        // Вывод сгенерированных фрагментов кода
         if (this.chunks.length) {
             let pos = template.entry.start;
             if (template.entry.type === 'BlockStatement') {
                 pos++;
             }
 
-            patcher.prepend(pos, this.chunks.join('\n') + '\n');
+            const indent = patcher.indent(pos);
+            patcher.prepend(pos, this.chunks.map(chunk => chunk + indent).join(''));
         }
-
-
-        // TODO вывести аргументы invalidate и setup
-        // TODO описать код для invalidate и setup
         // TODO сгенерировать код для эффектов
         // TODO скомпилировать шаблоны
     }
@@ -99,9 +104,10 @@ export default class ComponentDeclaration {
      * модификаторы в самом событии. Если обработчик скомпилировался, в самой
      * директиве будет он будет заменён на новый AST-узел.
      */
-    private compileEventHandler(handler: AST.ENDDirective, templateScope: Scope) {
+    private compileEventHandler(handler: AST.ENDDirective) {
         const { name, modifiers } = this.parseEvent(handler);
         const { value } = handler;
+        const templateScope = this.templateSrc!.scope;
         let mod = eventModifiers(modifiers);
 
         if (!value || (!mod && value.type === 'Identifier')) {
@@ -183,8 +189,10 @@ export default class ComponentDeclaration {
             // Пропатчим обновления, символы которых были объявлены
             // в скоупе фабрики компонента
             for (const [symbol, nodes] of templateScope.updates) {
-                if (!this.scope.declarations.has(symbol)) {
-                    // Модификация символа, объявленного за пределами фабрики компонента
+                if (!this.shouldInvalidate(symbol)) {
+                    // Модификация символа, объявленного за пределами фабрики компонента.
+                    // Либо символ не используется в шаблоне
+                    // TODO а если используется в `computed`?
                     continue;
                 }
                 for (let n of nodes) {
@@ -242,6 +250,69 @@ export default class ComponentDeclaration {
             this.scopeSymbols.set(name, this.scopeSymbols.size);
         }
     }
+
+    /**
+     * Добавляет код, необходимый для инициализации компонента
+     */
+    private bootstrap(): { pos: number, text: string } | undefined {
+        const templateScope = this.templateSrc!.scope;
+        const args: string[] = [];
+        if (this.scopeSymbols.size) {
+            const setup = this.scope.id(setupArg);
+            args.push(setup === setupArg ? setup : `${setupArg}: ${setup}`);
+
+            // Собираем маску шаблона из переменных, от которых зависит рендеринг
+            let templateMask = 0;
+            let templateMaskComment: string[] = [];
+            for (const symbol of templateScope.usages.keys()) {
+                if (!this.scope.updates.has(symbol)) {
+                    // Значение не меняется: ре-рендеринг шаблона не зависит от него
+                    continue;
+                }
+
+                const index = this.scopeSymbols.get(symbol);
+                if (index != null) {
+                    templateMask |= 1 << index;
+                    templateMaskComment.push(symbol);
+                } else {
+                    this.ctx.warn(`Unknown template symbol: "${symbol}"`);
+                }
+            }
+
+            this.chunks.push(`${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${templateMask} /* ${templateMaskComment.join(' | ')} */)`);
+        }
+
+        if (this._invalidateSymbol) {
+            const invalidate = this._invalidateSymbol;
+            args.push(invalidate === invalidateArg ? invalidate : `${invalidateArg}: ${invalidate}`);
+        }
+
+        if (args.length) {
+            let pos = 0
+            let text = `, { ${args.join(', ')} }`;
+            const firstArg = this.node.params[0];
+            if (firstArg) {
+                pos = firstArg.end;
+            } else {
+                // Нет аргумента, надо его добавить
+                text = '_' + text;
+                pos = this.ctx.code.indexOf('(', this.node.start);
+            }
+
+            return { pos, text };
+        }
+    }
+
+    /**
+     * Вернёт `true` если указанный символ требует инвалидации на изменение
+     */
+    private shouldInvalidate(symbol: string): boolean {
+        const { scope, templateSrc } = this;
+
+        // TODO проверить на участие символа в computed-примитивах
+        return scope.declarations.has(symbol)
+            && templateSrc?.scope.usages.has(symbol) || false;
+    }
 }
 
 function eventModifiers(modifiers: Set<string>): ((name: string) => string) | undefined {
@@ -263,19 +334,26 @@ function getTemplateSymbols(componentScope: Scope, templateScope: Scope): string
     const lookup = new Map<string, number>();
     const symbols = [
         ...templateScope.usages.keys(),
-        ...templateScope.updates.keys()
+        ...templateScope.updates.keys(),
     ];
 
-    const hasUpdate = (name: string) => (componentScope.updates.has(name) && componentScope.declarations.has(name))
-        || templateScope.updates.has(name);
+    const getWeight = (name: string) => {
+        if (componentScope.updates.has(name) && componentScope.declarations.has(name)) {
+            return 2;
+        }
+
+        if (templateScope.updates.has(name)) {
+            return 1;
+        }
+
+        return 0;
+    }
 
     symbols.forEach((name, ix) => !lookup.has(name) && lookup.set(name, ix));
 
     // Символы, которые обновляются, нужно подтянуть ближе к началу, чтобы они
     // уместились в ограничение маски 2^31 - 1
     return symbols.sort((a, b) => {
-        const updateA = hasUpdate(a) ? 1 : 0;
-        const updateB = hasUpdate(b) ? 1 : 0;
-        return (updateA - updateB) || (lookup.get(a)! - lookup.get(b)!);
+        return (getWeight(b) - getWeight(a)) || (lookup.get(a)! - lookup.get(b)!);
     });
 }

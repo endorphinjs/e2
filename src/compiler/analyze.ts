@@ -8,10 +8,10 @@ export interface SymbolAnalysisResult {
     scope: Scope;
     /** Скоупы для функций, объявленных внутри фабрики */
     fnScopes: Map<ESTree.Function, Scope>;
-    template?: SymbolAnalysisTemplate;
+    template?: TemplateSource;
 }
 
-export interface SymbolAnalysisTemplate {
+export interface TemplateSource {
     ast: ESTree.TaggedTemplateExpression;
     scope: Scope;
     entry: ESTree.Node;
@@ -40,7 +40,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
     const scopeStack: Scope[]  = [];
     const fnScopes = new Map<ESTree.Function, Scope>();
     let rootScope: Scope | null = null;
-    let template: SymbolAnalysisTemplate | undefined;
+    let template: TemplateSource | undefined;
 
     /*
     TODO строить зависимости на вызов функций:

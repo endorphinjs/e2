@@ -55,13 +55,28 @@ export default class Context {
      * Печатает Warning при парсинге или компиляции шаблона
      */
     warn(message: string, pos?: PosSource) {
-        console.warn(message);
+        console.warn(message + posSuffix(pos));
     }
 
     /**
      * Выбрасывает исключение
      */
     error(message: string, pos?: PosSource) {
-        throw new Error(message);
+        throw new Error(message = posSuffix(pos));
     }
+}
+
+function posSuffix(pos?: PosSource): string {
+    if (pos != null) {
+        if (typeof pos === 'number') {
+            return ` at ${pos}`;
+        }
+
+        if (Array.isArray(pos)) {
+            return ` at ${pos[0]}:${pos[1]}`;
+        }
+        return ` at ${pos.start}:${pos.end}`;
+    }
+
+    return '';
 }
