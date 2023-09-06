@@ -2,7 +2,7 @@
 
 Основные принципы будущего решения:
 * Точкой входа в компонент является JS-файл.
-* Поддержка реактивных примитивов (см. [Vue](https://vuejs.org/guide/essentials/reactivity-fundamentals.html) или [@preact/signals](https://preactjs.com/guide/v10/signals/).
+* Поддержка реактивных примитивов (см. [Vue](https://vuejs.org/guide/essentials/reactivity-fundamentals.html) или [@preact/signals](https://preactjs.com/guide/v10/signals/)).
 
 Из главных изменений (по сравнению с текущей версией Endorphin):
 * Шаблон указывается внутри фабрики компонента с помощью Tagged Templates. Это решает сразу несколько проблем: бесплатно получаем валидацию, type checking и автокомплит данных, а также используем готовые плагины типа [Lit](https://marketplace.visualstudio.com/items?itemName=runem.lit-plugin) для подсветки синтаксиса внутри такой строки.
@@ -85,4 +85,58 @@ export default defineComponent(({ enabled, name }: Props) => {
         </ul>
     </div>`;
 });
+```
+
+### JSX
+
+Особенность примера выше: с помощью метода `defineComponent()` мы подсказываем компилятору, что внутри функции описывается компонент и нужно модифицировать её тело таким образом, чтобы всё правильно обновлялось.
+
+Такой же подсказкой может быть и наличие JSX узла в AST функции. Поэтому с небольшой модификацией парсера можно использовать React-подобный контракт и синтаксис, чтобы переиспользовать инфраструктуру React-инструментов для Endorphin. Вот как выглядит пример выше в JSX-стиле (вроде такой код нормально отрабатывается компилятором):
+
+```tsx
+import { computed, onDestory } from 'endorphin';
+import AnotherComponent from './AnotherComponent.ts';
+
+// Импорт стилей компонента. Стили так же автоматически преобразуются и скоупятся
+import './style.css';
+
+export interface Props {
+    enabled: boolean;
+    name: string;
+}
+
+// Общая переменная модуля, как в обычном JS
+let instances = 0;
+const items = ['a', 'b', 'c'];
+
+// В качестве описания компонента используем обычную функцию с JSX внутри
+export default function MyComponent({ enabled, name }: Props) {
+    instances++;
+
+    let item: string;
+    let innerValue = 1;
+    const fullName = computed(() => enabled ? name : 'Disabled');
+
+    const onItemClick = (item: string) => {
+        console.log('Clicked on', item);
+    };
+
+    onDestory(() => {
+        instances--;
+        console.log('component destroyed')
+    });
+
+    return <div class={innerValue ? 'foo' : 'bar'}
+                class:enabled={enabled}>
+        <if test={enabled}>
+            <p onClick={innerValue++}>{fullName}</p>
+            <AnotherComponent prop={name} />
+        </if>
+        <ul>
+            <for select={items} as={item}>
+                <li class="item" onClick:prevent={onItemClick(item)}>{item}</li>
+            </for>
+        </ul>
+    </div>;
+}
 ```
