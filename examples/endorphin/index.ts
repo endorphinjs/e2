@@ -1,5 +1,5 @@
 import { RenderContext, setTarget } from './internal';
-import type { ComponentOptions, IComponentBase, OnRenderCallback, OnUnmountCallback, Render, RenderExtend, RenderResult } from './types';
+import type { ComponentOptions, Computer, IComponentBase, OnRenderCallback, OnUnmountCallback, Render, RenderExtend, RenderResult } from './types';
 
 // Публичный контракт для работы с Endorphin
 type ComponentFactory<T> = (props: T, context: RenderContext) => Render<T> | RenderExtend<T>;
@@ -11,7 +11,11 @@ export function useComponent(components: { [name: string]: any }) {
 
 }
 
-export function computed<T>(callback: () => T): T {
+export function computed<T>(callback: () => T, deps?: Array<number | Computer>, slot?: number): T {
+    if (context) {
+        return context.setComputed(callback, deps, slot) as T;
+    }
+    console.warn(`"computed" should be called in context of component to be reactive`);
     return callback();
 }
 
@@ -93,6 +97,6 @@ class ComponentBase<P extends {} | undefined> implements IComponentBase<P> {
 
     unmount() {
         this.context.unmount();
-        this._template = this.context = this.props = null;
+        // this._template = this.context = this.props = null;
     }
 }

@@ -1,6 +1,6 @@
-import { defineComponent, onDestory, onRender } from '../endorphin';
-import { attach, setTargetAfter, ForEachBlock, IfBlock, setTargetPrepend, RenderContext } from '../endorphin/internal';
-import type { RenderMask, RenderScope, RenderStage } from '../endorphin/types';
+import { computed, defineComponent, onDestory, onRender } from '../endorphin';
+import { attach, setTargetAfter, ForEachBlock, IfBlock, setTargetPrepend, RenderContext, getComputed } from '../endorphin/internal';
+import type { RenderScope, RenderStage } from '../endorphin/types';
 import AnotherComponent from './AnotherComponent';
 
 // import './style.css';
@@ -27,26 +27,32 @@ const items = ['a', 'b', 'c'];
  *    контракт для Block)
  * 1. Пройтись по массиву переменных — если это сигнал, подписаться на него
  *    с инвалидацией нужной маски
- * 1. Для всех используемых локальных переменных найти мутции и добавить
+ * 1. Для всех используемых локальных переменных найти мутации и добавить
  *    для них инвалидацию по индексу в `ctx`
  * 1. Для каждой переменной построить граф зависимостей и на изменение значения
  *    инвалидировать
  */
 
-export default defineComponent(({ enabled, name }: Props, { setup, invalidate }) => {
+export default defineComponent(({ enabled, name }: Props, ctx) => {
+    const { invalidate } = ctx;
     instances++;
 
     let item: string = '';
     let innerValue = 1;
 
-    // Выносим коллбэки из computed, меняем объявления переменных
-    const fullName__compute = () => enabled ? name : 'Disabled';
-    let fullName = fullName__compute();
-    const uppercaseFullName__compute = () => fullName.toUpperCase();
-    let uppercaseFullName = uppercaseFullName__compute();
+    // В реальности результат `computed` – это коллбэк, который мы передали.
+    // По нему и будем идентифицировать значение.
+    // А все обращения к computed-значению заменяем на вызов `getComputed()`
+    const fullName = computed(() => enabled ? name : 'Disabled', [0, 1], 4) as unknown as () => string;
+    const uppercaseFullName = computed(() => getComputed(fullName).toUpperCase(), [fullName], 5) as unknown as () => string;
 
     const onItemClick = (item: string) => {
+        enabled = invalidate(0, !enabled);
+        invalidate(1, name += 'a');
+        console.log(getComputed(fullName));
+
         console.log('Clicked on', item);
+        console.log(getComputed(fullName));
     };
 
     onRender(() => {
@@ -78,29 +84,25 @@ export default defineComponent(({ enabled, name }: Props, { setup, invalidate })
         }
     }
 
-    function invalidateDeps(dirty: RenderMask) {
-        (dirty & 3 /* 1 << 0 | 1 << 1 */) && invalidate(4, fullName = fullName__compute());
-        (dirty & 16 /* 1 << 4 */) && invalidate(5, uppercaseFullName = uppercaseFullName__compute());
-    }
-
-    setup(
+    ctx.setup(
         // Значения отсортировать по мутабельности: вначале те, что меняются, чтобы
         // не попасть раньше времени в переполнение битовой маски
         [enabled, name, item, innerValue, fullName, uppercaseFullName, onItemClick, onClickhandler1, createEvent1],
         MyComponent_template,
-        1 | 2 | 8 | 1 << 4 | 1 << 5,
-        invalidateDeps
-        // TODO обновить эффекты
+        1 | 2 | 8 | 16 | 32,
     );
+
+    // ctx.setEffects(dirty => {
+    //     (dirty & (1 | 2)) && invalidate(4, fullName = fullName__compute());
+    //     // `uppercaseFullName` заависит от `fullName`, но так как `fullName` — это
+    //     // computed-свойство, также перечисляем и его зависимости
+    //     (dirty & (1 | 2 | 16)) && invalidate(5, uppercaseFullName = uppercaseFullName__compute());
+    // }, 1 | 2 | 16);
 
     return (nextProps: Props) => {
         // Обновляем пропсы
-        if (nextProps.enabled !== enabled) {
-            invalidate(0, enabled = nextProps.enabled);
-        }
-        if (nextProps.name !== name) {
-            invalidate(1, name = nextProps.name);
-        }
+        enabled = invalidate(0, nextProps.enabled);
+        name = invalidate(1, nextProps.name);
     };
 });
 

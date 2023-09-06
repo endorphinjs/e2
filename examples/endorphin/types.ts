@@ -26,3 +26,5 @@ export interface ComponentOptions {
     // Точка монтирования компонента
     mount: Element | AttachTarget;
 }
+
+export type Computer<T = any> = () => T;

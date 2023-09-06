@@ -1,15 +1,10 @@
-import type { AttachTarget, OnRenderCallback, OnUnmountCallback, RenderBlock, RenderMask, RenderScope, RenderStage } from './types';
+import type { AttachTarget, Computer, OnRenderCallback, OnUnmountCallback, RenderBlock, RenderMask, RenderScope, RenderStage } from './types';
 
 type InvalidateHandler = <T>(index: number, value: T, nextValue?: T) => T;
 type OnRenderListener = [callback: OnRenderCallback, once?: boolean];
 type onDestoryListener = OnUnmountCallback;
 type ComponentTemplate = (ctx: RenderContext, stage: RenderStage, refs: RenderScope) => void;
-type ContextSetup = (
-    scope: RenderScope,
-    template: ComponentTemplate,
-    templateMask: RenderMask,
-    deps?: (dirty: number) => void
-) => RenderContext;
+type ComputedKey = number | Computer;
 
 interface ForEachHandler<Data> {
     (ctx: RenderContext, state: 3, refs: RenderScope, value?: Data, index?: number): void;
@@ -23,58 +18,144 @@ const enum WhereAttach {
 }
 
 const attachTarget: AttachTarget = [document.body, WhereAttach.Append];
+const noop = () => {};
+
+/** Глобальное хранилище computed-значений */
+export const computedValues = new Map<Computer, any>();
+
+/** Защита от потенциальных рекурсивных вызовов `invalidateComputed` */
+const computedGuard = new Set<ComputedKey>();
+
+export function getComputed<T = any>(computer: Computer<T>): T {
+    if (computedValues.has(computer)) {
+        return computedValues.get(computer);
+    }
+
+    const value = computer();
+    computedValues.set(computer, value);
+    return value;
+}
 
 export class RenderContext {
-    public scope: RenderScope | undefined;
-    public dirty: RenderMask = 0;
+    public scope: RenderScope;
     public invalidate: InvalidateHandler;
-    public setup: ContextSetup;
 
     private _onRender: OnRenderListener[] = [];
     private _onDestroy: onDestoryListener[] = [];
     private refs: RenderScope | null = null;
     private scheduled = false;
     private rendering = false;
-    private template: ComponentTemplate | undefined;
+
+    public dirty: RenderMask = 0;
+    private template: ComponentTemplate = noop;
     private templateMask: RenderMask = 0;
-    private deps: ((dirty: number) => void) | undefined;
+
+    /**
+     * Зависимости для computed-значений. В качестве ключа указывается индекс
+     * слота данных в `scope` либо computed-примитив. Значение — список
+     * computed-примитивов, которые зависят от ключа
+     */
+    private computedDeps = new Map<ComputedKey, Computer | Computer[]>();
+
+    /**
+     * Указатели на места в `scope`, где хранится computed-значение.
+     * В том числе используется для хранения всех computed-примитивов, используемых
+     * в компоненте
+     */
+    private computedSlots = new Map<Computer, number | undefined>();
+
+    private runScheduled = () => {
+        this.scheduled = false;
+        if (this.dirty & this.templateMask) {
+            this.render();
+        }
+    };
 
     constructor() {
-        this.setup = (scope, template, templateMask, deps) => {
-            this.scope = scope;
-            this.template = template;
-            this.templateMask = templateMask;
-            this.deps = deps;
-            return this;
-        };
-
         this.invalidate = (index, value, nextValue = value) => {
             // NB: контракт value + nextValue нужен для выражений типа
             // let b = 1;
             // const a = b++;
             // В этом случае b == 2, но а == 1, так как из выражения
             // b++ вернётся предыдущее значение
-            const { scope, deps } = this;
+            const { scope } = this;
             if (scope![index] !== nextValue) {
                 scope![index] = nextValue;
-                const dirty = 1 << index;
-                deps && deps(dirty);
-                this.schedule(dirty);
+                this.invalidateComputed(index);
+                this.markDirty(index);
             }
             return value;
         }
     }
 
-    public schedule(dirty: number) {
+    private markDirty(scopeSlot: number) {
+        this.dirty |= 1 << scopeSlot;
         // XXX проверить, что тут всё правильно отработает
-        if (dirty & this.templateMask) {
-            this.dirty |= dirty;
-            if (!this.scheduled) {
-                this.scheduled = true;
-                // Если не случился рендер, то выполним его
-                queueMicrotask(() => this.scheduled && this.render());
+        if (!this.scheduled) {
+            this.scheduled = true;
+            queueMicrotask(this.runScheduled);
+        }
+    }
+
+    public setComputed(computer: Computer, deps?: ComputedKey[], slot?: number): Computer {
+        this.computedSlots.set(computer, slot);
+        if (deps) {
+            // Распределяем зависимости: от каких элементов зависит наш computed.
+            // При изменении любого из указанных элементов computed будет
+            // инвалидироваться
+            const { computedDeps } = this;
+            for (let i = 0, dep: ComputedKey; i < deps.length; i++) {
+                dep = deps[i];
+                const entry = computedDeps.get(dep);
+                if (!entry) {
+                    computedDeps.set(dep, computer);
+                } else if (Array.isArray(entry)) {
+                    entry.push(computer);
+                } else {
+                    computedDeps.set(dep, [entry, computer]);
+                }
             }
         }
+        return computer;
+    }
+
+    public invalidateComputed(key: ComputedKey) {
+        try {
+            this._invalidateComputed(key);
+        } finally {
+            computedGuard.clear();
+        }
+    }
+
+    private _invalidateComputed(key: ComputedKey) {
+        if (computedGuard.has(key)) {
+            return;
+        }
+
+        computedGuard.add(key);
+
+        if (typeof key === 'function') {
+            computedValues.delete(key);
+            const slot = this.computedSlots.get(key);
+            if (slot !== undefined) {
+                this.markDirty(slot);
+            }
+        }
+
+        const refs = this.computedDeps.get(key);
+        if (Array.isArray(refs)) {
+            for (let i = 0; i < refs.length; i++) {
+                this._invalidateComputed(refs[i]);
+            }
+        } else if (refs) {
+            this._invalidateComputed(refs);
+        }
+    }
+
+    public setup(scope: RenderScope, template: ComponentTemplate, templateMask: RenderMask) {
+        this.scope = scope;
+        this.template = template;
+        this.templateMask = templateMask;
     }
 
     public render() {
@@ -82,10 +163,17 @@ export class RenderContext {
             return;
         }
 
-        this.scheduled = false;
         this.rendering = true;
         const stage: RenderStage = this.refs ? 2 : 1;
         try {
+            // Обновляем computed-значения
+            this.computedSlots.forEach((slot, computer) => {
+                if (slot !== undefined) {
+                    this.scope[slot] = getComputed(computer);
+                }
+            });
+
+            // TODO flush watch effects
             return this.template(this, stage, this.refs ??= []);
         } finally {
             this.dirty = 0;
@@ -111,6 +199,10 @@ export class RenderContext {
             } finally {
                 this.rendering = false;
                 this.dirty = 0;
+                this.refs = null;
+                this.computedSlots.forEach((_, computer) => computedValues.delete(computer));
+                this.computedSlots.clear();
+                this.computedDeps.clear();
 
                 const listeners = this._onDestroy;
                 for (let i = listeners.length - 1; i >= 0; i--) {

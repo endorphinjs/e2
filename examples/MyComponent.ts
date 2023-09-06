@@ -27,7 +27,7 @@ export default defineComponent(({ enabled, name }: Props) => {
 
     // Локальные переменные, которые буду использоваться в шаблоне,
     // объявляем в JS: получим бесплатную типизацию из JS/TS
-    let item: string;
+    let item = '';
     let innerValue = 1;
 
     // Объявляем реактивные переменные: они будут автоматически пересчитываться,
@@ -36,6 +36,11 @@ export default defineComponent(({ enabled, name }: Props) => {
     const uppercaseFullName = computed(() => fullName.toUpperCase());
 
     const onItemClick = (item: string) => {
+        enabled = !enabled;
+        console.log(fullName);
+        name += 'a';
+        console.log(fullName);
+
         console.log('Clicked on', item);
     };
 
