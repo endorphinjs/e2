@@ -1,4 +1,4 @@
-import { defineComponent, html } from './endorphin';
+import { defineComponent, html } from '../src/runtime';
 
 export default defineComponent(() => {
     let enabled = false;
@@ -6,7 +6,7 @@ export default defineComponent(() => {
         toggle() {
             enabled = !enabled;
         },
-        render: html`
+        update: html`
         <div class="another-component">
             Enabled: ${enabled}
         </div>`

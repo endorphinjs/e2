@@ -1,4 +1,4 @@
-import { defineComponent, onDestory, useComponent, computed, html } from './endorphin';
+import { onDestory, useComponent, computed, html } from '../src/runtime';
 
 import AnotherComponent from './AnotherComponent';
 
@@ -14,11 +14,12 @@ export interface Props {
 let instances = 0;
 const items = ['a', 'b', 'c'];
 
-// Объявляем компонент через вызов `defineComponent()`.
-// Вернётся класс, который в любом месте можно создать так:
+// Объявляем компонент как обычную функцию.
+// Програмно ткой компонент можно создать так:
 // import MyComponent from './component.ts';
-// const c = new MyComponent(props);
-export default defineComponent(({ enabled, name }: Props) => {
+// const c = MyComponent(props);
+// c.mount(document.body);
+export default function MyComponent({ enabled, name }: Props) {
     // Вызов текущей функции работает как `willMount()` из предыдущей
     // версии эндорфина
 
@@ -79,4 +80,4 @@ export default defineComponent(({ enabled, name }: Props) => {
             </e:for-each>
         </ul>
     </div>`;
-});
+}
