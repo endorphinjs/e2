@@ -17,24 +17,6 @@ export interface TemplateSource {
     entry: ESTree.Node;
 }
 
-/**
- * Вернёт список узлов, которые содержат описания коллбэки для описания компонента
- */
-export function findComponentCallbacks(program: ESTree.Node, ctx = new EndorphinContext()): ESTree.Node[] {
-    const result: ESTree.Node[] = [];
-
-    traverse(program, {
-        enter(node) {
-            if (ctx.isComponentFactory(node)) {
-                result.push(node.arguments[0]);
-                this.skip();
-            }
-        }
-    });
-
-    return result;
-}
-
 export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext()): SymbolAnalysisResult {
     const parents: ESTree.Node[] = [];
     const scopeStack: Scope[]  = [];
@@ -79,7 +61,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
                         }
 
                         const prevParent = at(parents, -2);
-                        if (!prevParent || ctx.isComponentFactory(prevParent)) {
+                        if (ctx.isComponentFactory(parent) || !prevParent || ctx.isExplicitComponentDeclaration(prevParent)) {
                             collectPropsFromFunction(parent, scope);
                         }
                     } else if (parent.type === 'CatchClause' && parent.param) {

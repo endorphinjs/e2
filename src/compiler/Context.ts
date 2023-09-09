@@ -35,6 +35,9 @@ export default class Context {
         traverse(this.ast, {
             enter(node) {
                 if (endorphin.isComponentFactory(node)) {
+                    result.push(node);
+                    this.skip();
+                } else if (endorphin.isExplicitComponentDeclaration(node)) {
                     result.push(node.arguments[0] as ESTree.Function);
                     this.skip();
                 }

@@ -1,19 +1,15 @@
 import fs from 'node:fs/promises';
 import { suite } from 'uvu';
 import { equal } from 'uvu/assert';
-import { parse } from 'acorn';
-import type { Node } from 'estree';
-import { findComponentCallbacks, runSymbolAnalysis } from '../src/compiler/analyze';
+import { runSymbolAnalysis } from '../src/compiler/analyze';
+import { Context } from '../src/compiler';
 import Scope from '../src/compiler/Scope';
 
 const test = suite('Symbol analysis');
 
 function analyze(code: string) {
-    const program = parse(code, {
-        ecmaVersion: 'latest',
-        sourceType: 'module'
-    });
-    return runSymbolAnalysis(findComponentCallbacks(program as Node)[0]);
+    const ctx = new Context(code);
+    return runSymbolAnalysis(ctx.getComponents()[0]);
 }
 
 function keys(scope: Scope, key: 'declarations' | 'usages' | 'updates' | 'dependencies' | 'props'): string[] {
