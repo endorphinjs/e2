@@ -6,12 +6,15 @@ import parse, { type AST } from '../parser';
 import Patcher, { patcherFromNode, type NodeMapping } from './Patcher';
 import { capitalize } from '../shared/utils';
 
+interface Patch {
+    pos: number;
+    text: string;
+}
+
 /**
  * Поддерживаемые модификаторы событий
  */
 const supportedModifiers = new Set(['stop', 'stopPropagation', 'prevent', 'preventDefault', 'passive']);
-const setupArg = 'setup';
-const invalidateArg = 'invalidate';
 
 /**
  * Декларация компонента: его внутренний скоуп и патчи для финального кода
@@ -24,11 +27,14 @@ export default class ComponentDeclaration {
     };
 
     private fnScopes: SymbolAnalysisResult['fnScopes'];
-    private chunks: string[] = [];
     private _invalidateSymbol: string | undefined;
     private scopeSymbols = new Map<string, number>();
     private templateSrc?: TemplateSource;
 
+    /**
+     * @param ctx Контекст компиляции модуля
+     * @param node AST-узел функции-фабрики компонента
+     */
     constructor(public ctx: Context, public node: ESTree.Function) {
         const { scope, fnScopes, template } = runSymbolAnalysis(node, ctx.endorphin);
         this.scope = scope;
@@ -49,7 +55,7 @@ export default class ComponentDeclaration {
 
     private get invalidateSymbol(): string {
         if (!this._invalidateSymbol) {
-            this._invalidateSymbol = this.scope.id(invalidateArg);
+            this._invalidateSymbol = this.scope.id('invalidate');
         }
 
         return this._invalidateSymbol;
@@ -66,7 +72,10 @@ export default class ComponentDeclaration {
 
         // Компилируем все обработчики событий
         for (const event of template.ast.events) {
-            this.compileEventHandler(event.handler);
+            const patch = this.compileEventHandler(event.handler);
+            if (patch) {
+                patcher.prepend(patch.pos, patch.text, true);
+            }
         }
 
         // Патчим обновления переменных
@@ -79,21 +88,10 @@ export default class ComponentDeclaration {
         }
 
         // Код для связывания данных внутри компонента
-        const patch = this.bootstrap();
-        if (patch) {
-            patcher.append(patch.pos, patch.text);
+        for (const patch of this.bootstrap()) {
+            patcher.prepend(patch.pos, patch.text, true);
         }
 
-        // Вывод сгенерированных фрагментов кода
-        if (this.chunks.length) {
-            let pos = template.entry.start;
-            if (template.entry.type === 'BlockStatement') {
-                pos++;
-            }
-
-            const indent = patcher.indent(pos);
-            patcher.prepend(pos, this.chunks.map(chunk => chunk + indent).join(''));
-        }
         // TODO сгенерировать код для эффектов
         // TODO скомпилировать шаблоны
     }
@@ -104,7 +102,7 @@ export default class ComponentDeclaration {
      * модификаторы в самом событии. Если обработчик скомпилировался, в самой
      * директиве будет он будет заменён на новый AST-узел.
      */
-    private compileEventHandler(handler: AST.ENDDirective) {
+    private compileEventHandler(handler: AST.ENDDirective): Patch | undefined {
         const { name, modifiers } = this.parseEvent(handler);
         const { value } = handler;
         const templateScope = this.templateSrc!.scope;
@@ -204,12 +202,16 @@ export default class ComponentDeclaration {
             }
 
             this.pushSymbol(eventHandlerSymbol);
-            this.chunks.push(patcher.render());
             handler.value = {
                 type: 'Identifier',
                 name: eventHandlerSymbol,
                 start: value.start,
                 end: value.end
+            };
+
+            return {
+                pos: this.getInsertionPoint('after'),
+                text: patcher.render()
             };
         }
     }
@@ -254,12 +256,21 @@ export default class ComponentDeclaration {
     /**
      * Добавляет код, необходимый для инициализации компонента
      */
-    private bootstrap(): { pos: number, text: string } | undefined {
+    private bootstrap(): Patch[] {
+        const result: Patch[] = [];
         const templateScope = this.templateSrc!.scope;
-        const args: string[] = [];
+
+        let createContext = `${this.ctx.useInternal('createContext')}();`;
+        if (this._invalidateSymbol) {
+            createContext = `const ${this._invalidateSymbol} = ${createContext}`;
+        }
+        result.push({
+            pos: this.getInsertionPoint('before'),
+            text: createContext
+        });
+
         if (this.scopeSymbols.size) {
-            const setup = this.scope.id(setupArg);
-            args.push(setup === setupArg ? setup : `${setupArg}: ${setup}`);
+            const setup = this.ctx.useInternal('setupContext');
 
             // Собираем маску шаблона из переменных, от которых зависит рендеринг
             let templateMask = 0;
@@ -279,28 +290,13 @@ export default class ComponentDeclaration {
                 }
             }
 
-            this.chunks.push(`${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${templateMask} /* ${templateMaskComment.join(' | ')} */)`);
+            result.push({
+                pos: this.getInsertionPoint('after'),
+                text: `${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${templateMask} /* ${templateMaskComment.join(' | ')} */);`
+            });
         }
 
-        if (this._invalidateSymbol) {
-            const invalidate = this._invalidateSymbol;
-            args.push(invalidate === invalidateArg ? invalidate : `${invalidateArg}: ${invalidate}`);
-        }
-
-        if (args.length) {
-            let pos = 0
-            let text = `, { ${args.join(', ')} }`;
-            const firstArg = this.node.params[0];
-            if (firstArg) {
-                pos = firstArg.end;
-            } else {
-                // Нет аргумента, надо его добавить
-                text = '_' + text;
-                pos = this.ctx.code.indexOf('(', this.node.start);
-            }
-
-            return { pos, text };
-        }
+        return result;
     }
 
     /**
@@ -312,6 +308,30 @@ export default class ComponentDeclaration {
         // TODO проверить на участие символа в computed-примитивах
         return scope.declarations.has(symbol)
             && templateSrc?.scope.usages.has(symbol) || false;
+    }
+
+    /**
+     * Возвращает оптимальную позицию для вставки кода
+     * @param type Какая именно позиция нужна: в начале кода шаблона (before)
+     * или в конце (after)
+     */
+    private getInsertionPoint(type: 'before' | 'after'): number {
+        const { node } = this;
+
+        if (node.body.type === 'BlockStatement') {
+            const refNode = type === 'before'
+                ? node.body.body[0]
+                : node.body.body.find(child => child.type === 'ReturnStatement');
+
+            if (refNode) {
+                return refNode.start;
+            }
+
+            return type === 'before' ? node.body.start + 1 : node.body.end - 1;
+        }
+
+        // Тело функции — выражение
+        return node.body.start;
     }
 }
 

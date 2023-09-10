@@ -21,7 +21,7 @@ test('component1.js', async () => {
     const decl = new ComponentDeclaration(ctx, component);
     decl.compile(ctx.patcher);
 
-    same(ctx.patcher.render(), await read('./fixtures/compile/component1.js'));
+    same(ctx.render(), await read('./fixtures/compile/component1.js'));
 });
 
 test.run();

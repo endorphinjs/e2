@@ -32,7 +32,11 @@ export default class Patcher {
      * Добавляет `value` в указанную позицию. Если в ней уже были изменения,
      * добавит их в начале существующих изменений
      */
-    prepend(pos: number, value: string) {
+    prepend(pos: number, value: string, indent?: boolean) {
+        if (indent) {
+            value += this.indent(pos);
+        }
+
         this.patches.push({
             start: pos,
             end: pos,

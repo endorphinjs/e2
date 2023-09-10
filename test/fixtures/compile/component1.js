@@ -1,7 +1,9 @@
+import { createContext, setupContext } from 'endorphin/internal';
 import { defineComponent, html } from './endorphin';
 
 let outer = 1;
-defineComponent(({ num }, { setup, invalidate }) => {
+defineComponent(({ num }) => {
+    const invalidate = createContext();
     let inner = 1;
     let str = 'a';
 
@@ -13,6 +15,6 @@ defineComponent(({ num }, { setup, invalidate }) => {
     }
 
     function onMousedown() { inner++ }
-    setup([num, inner, update, onMousedown], 1 /* num */)
+    setupContext([num, inner, update, onMousedown], 1 /* num */);
     return html`<div @click=${update} @mousedown=${inner++}>${num}</div>`;
 });

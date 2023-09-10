@@ -8,6 +8,12 @@ import Patcher from './Patcher';
 type Pos = [start: number, end: number];
 type PosSource = number | Pos | ESTree.Node;
 
+/** Приватные функции модуля */
+type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext';
+
+/** Путь к модулю с приватным функциями */
+const internalModule = 'endorphin/internal';
+
 /**
  * Контекст компиляции исходного JS-модуля
  */
@@ -16,6 +22,8 @@ export default class Context {
     public endorphin: EndorphinContext;
     public scope: Scope;
     public patcher: Patcher;
+
+    private usedInternals = new Map<InternalSymbols, string>();
 
     constructor(public code: string) {
         this.ast = parse(code, { ecmaVersion: 'latest', sourceType: 'module' }) as ESTree.Program;
@@ -66,6 +74,35 @@ export default class Context {
      */
     error(message: string, pos?: PosSource) {
         throw new Error(message = posSuffix(pos));
+    }
+
+    /**
+     * Возвращает обновлённый код модуля с скомпилированными модулями и шаблонами
+     */
+    render() {
+        let prefix = '';
+        if (this.usedInternals.size) {
+            const imports: string[] = [];
+            this.usedInternals.forEach((value, key) => {
+                imports.push(key === value ? key : `${key} as ${value}`);
+            });
+
+            prefix += `import { ${imports.join(', ')} } from '${internalModule}';\n`;
+        }
+
+        return prefix + this.patcher.render();
+    }
+
+    /**
+     * Возвращает указатель на внутренний метод из приватного модуля рантайма.
+     * Также помечает этот метод как используемый
+     */
+    useInternal(symbol: InternalSymbols): string {
+        if (!this.usedInternals.has(symbol)) {
+            this.usedInternals.set(symbol, this.scope.id(symbol));
+        }
+
+        return this.usedInternals.get(symbol)!;
     }
 }
 
