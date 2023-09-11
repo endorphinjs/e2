@@ -1,8 +1,12 @@
 import type * as ESTree from 'estree';
-import { last } from '../shared/utils';
 
 type PropType = 'prop' | 'container' | 'rest';
 type PropInfo = [propName: string, propType: PropType];
+interface ComputedRef {
+    id: string;
+    node: ESTree.CallExpression;
+    deps: Set<string>
+}
 
 /**
  * Данные для области видимости переменных
@@ -21,16 +25,22 @@ export default class Scope {
     /** Символы, которые *обновляются* внутри текущего скоупа */
     updates = new Map<string, ESTree.Node[]>();
 
-    /** Зависимости computed-переменных */
-    dependencies = new Map<string, Set<string>>();
+    /** computed-переменные, созданные в текущем скоупе */
+    computed = new Map<string, ComputedRef>();
 
-    private computedStack: string[] = [];
+    /** Текущая computed-переменная, для которой собираются данные */
+    private computedCtx: string | null = null;
 
     /** Символы, которые были сгенерированы компилятором */
     private issued = new Set<string>();
 
     /** Счётчик для сгенерированных символов */
     private issuedCounter = new Map<string, number>();
+
+    /** Вернёт `true` если сейчас находимся в контексте сбора данных для computed-значения */
+    get inComputedContext(): boolean {
+        return this.computedCtx != null;
+    }
 
     addDeclaration(name: string, node: ESTree.Node) {
         this.declarations.set(name, node);
@@ -54,12 +64,12 @@ export default class Scope {
         }
     }
 
-    addDependency(name: string, dep: string) {
-        const deps = this.dependencies.get(name);
-        if (deps) {
-            deps.add(dep);
+    addComputedDependency(name: string, dep: string) {
+        const entry = this.computed.get(name);
+        if (entry) {
+            entry.deps.add(dep);
         } else {
-            this.dependencies.set(name, new Set([dep]));
+            throw new Error(`The computed symbol "${name}" doesn’t exists`)
         }
     }
 
@@ -79,15 +89,13 @@ export default class Scope {
      * Перенос данных из указанного `scope` в текущий
      */
     transfer(scope: Scope) {
-        const computed = last(this.computedStack);
-
         for (const [name, nodes] of scope.usages) {
             if (!scope.declarations.has(name)) {
                 const cur = this.usages.get(name) || [];
                 this.usages.set(name, cur.concat(nodes));
 
-                if (computed) {
-                    this.addDependency(computed, name);
+                if (this.computedCtx) {
+                    this.addComputedDependency(this.computedCtx, name);
                 }
             }
         }
@@ -100,12 +108,18 @@ export default class Scope {
         }
     }
 
-    pushComputed(name: string) {
-        this.computedStack.push(name);
+    enterComputed(id: string, node: ESTree.CallExpression) {
+        this.computed.set(id, { id, node, deps: new Set() });
+        this.computedCtx = id;
     }
 
-    popComputed() {
-        this.computedStack.pop();
+    exitComputed(node: ESTree.Node) {
+        if (this.computedCtx) {
+            const entry = this.computed.get(this.computedCtx);
+            if (entry?.node === node) {
+                this.computedCtx = null;
+            }
+        }
     }
 
     setProp(symbolName: string, propType: PropType, propName = symbolName) {

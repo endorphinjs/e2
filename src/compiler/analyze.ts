@@ -1,7 +1,7 @@
 import type * as ESTree from 'estree';
 import { traverse } from 'estraverse';
 import Scope from './Scope';
-import EndorphinContext from './EndorphinContext';
+import Context from './Context';
 import { at, findLast, findLastIndex, last } from '../shared/utils';
 
 export interface SymbolAnalysisResult {
@@ -17,10 +17,11 @@ export interface TemplateSource {
     entry: ESTree.Node;
 }
 
-export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext()): SymbolAnalysisResult {
+export function runSymbolAnalysis(root: ESTree.Node, ctx: Context): SymbolAnalysisResult {
     const parents: ESTree.Node[] = [];
     const scopeStack: Scope[]  = [];
     const fnScopes = new Map<ESTree.Function, Scope>();
+    const { endorphin } = ctx;
     let rootScope: Scope | null = null;
     let template: TemplateSource | undefined;
 
@@ -39,7 +40,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
 
     traverse(root, {
         enter(node, parent) {
-            if (ctx.isTemplate(node)) {
+            if (endorphin.isTemplate(node)) {
                 template = {
                     ast: node,
                     scope: new Scope(),
@@ -61,7 +62,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
                         }
 
                         const prevParent = at(parents, -2);
-                        if (ctx.isComponentFactory(parent) || !prevParent || ctx.isExplicitComponentDeclaration(prevParent)) {
+                        if (endorphin.isComponentFactory(parent) || !prevParent || endorphin.isExplicitComponentDeclaration(prevParent)) {
                             collectPropsFromFunction(parent, scope);
                         }
                     } else if (parent.type === 'CatchClause' && parent.param) {
@@ -73,11 +74,21 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
             }
 
             if (node.type === 'CallExpression') {
-                if (ctx.isComputed(node, parent) && parent.id.type === 'Identifier') {
-                    last(scopeStack)?.pushComputed(parent.id.name);
+                if (endorphin.isComputed(node) && parent) {
+                    const lastScope = last(scopeStack);
+                    const id = getComputedId(parent);
+                    if (id && lastScope) {
+                        if (lastScope.inComputedContext) {
+                            ctx.warn('Nested computed values are not supported', node);
+                        } else {
+                            lastScope.enterComputed(id, node);
+                        }
+                    } else {
+                        ctx.warn('Unsupported computed reference', node);
+                    }
                 }
             } else if (node.type === 'Identifier') {
-                if (parent && ctx.isTemplate(parent) && parent.tag === node) {
+                if (parent && endorphin.isTemplate(parent) && parent.tag === node) {
                     // skip
                 } else {
                     const scope = last(scopeStack);
@@ -92,7 +103,7 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
         leave(node, parent) {
             parents.pop();
 
-            if (ctx.isTemplate(node)) {
+            if (endorphin.isTemplate(node)) {
                 scopeStack.pop();
             } else if (isBlockEnter(node, parent)) {
                 const scope = scopeStack.pop();
@@ -107,8 +118,8 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
             }
 
             if (node.type === 'CallExpression') {
-                if (ctx.isComputed(node, parent) && parent.id.type === 'Identifier') {
-                    last(scopeStack)?.popComputed();
+                if (endorphin.isComputed(node)) {
+                    last(scopeStack)?.exitComputed(node);
                 }
             } else if (node.type === 'VariableDeclarator') {
                 // Проверим объявление пропсов в теле фабрики
@@ -127,11 +138,6 @@ export function runSymbolAnalysis(root: ESTree.Node, ctx = new EndorphinContext(
                         && init.property.type === 'Identifier') {
                         scope.setProp(id.name, 'prop', init.property.name);
                     }
-                }
-            } else if (node.type === 'Identifier') {
-                const scope = last(scopeStack);
-                if (scope && ctx.isComputed(node, parent)) {
-                    scope.popComputed();
                 }
             }
         }
@@ -334,4 +340,23 @@ function getTemplateEntry(parents: ESTree.Node[]): ESTree.Node {
 
     // Shouldn’t be here
     return parents[0];
+}
+
+/**
+ * Возвращает идентификатор computed-переменной
+ */
+function getComputedId(node: ESTree.Node): string | undefined {
+    let idSource: ESTree.Node | undefined;
+    switch (node.type) {
+        case 'AssignmentExpression':
+            idSource = node.left;
+            break;
+        case 'VariableDeclarator':
+            idSource = node.id;
+            break;
+    }
+
+    if (idSource?.type === 'Identifier') {
+        return idSource.name;
+    }
 }

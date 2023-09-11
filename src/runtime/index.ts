@@ -1,5 +1,5 @@
 import type { RenderContext } from './lib/RenderContext';
-import type { Component, Computer, OnRenderCallback, OnUnmountCallback, Render, RenderExtend, RenderResult } from './types';
+import type { Component, Computer, OnRenderCallback, OnUnmountCallback, Render, RenderResult } from './types';
 
 let context: RenderContext | null = null;
 

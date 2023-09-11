@@ -73,11 +73,10 @@ export default class EndorphinContext {
         return this.isTemplate(node.body);
     }
 
-    isComputed(node: ESTree.Node, parent: ESTree.Node | null): parent is ESTree.VariableDeclarator {
+    isComputed(node: ESTree.Node): node is ESTree.CallExpression {
         return node.type === 'CallExpression'
             && node.callee.type === 'Identifier'
-            && node.callee.name === this.options.computed
-            && parent?.type === 'VariableDeclarator';
+            && node.callee.name === this.options.computed;
     }
 
     isTemplate(node: ESTree.Node): node is ESTree.TaggedTemplateExpression {

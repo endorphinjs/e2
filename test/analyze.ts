@@ -9,10 +9,10 @@ const test = suite('Symbol analysis');
 
 function analyze(code: string) {
     const ctx = new Context(code);
-    return runSymbolAnalysis(ctx.getComponents()[0]);
+    return runSymbolAnalysis(ctx.getComponents()[0], ctx);
 }
 
-function keys(scope: Scope, key: 'declarations' | 'usages' | 'updates' | 'dependencies' | 'props'): string[] {
+function keys(scope: Scope, key: 'declarations' | 'usages' | 'updates' | 'computed' | 'props'): string[] {
     return Array.from(scope[key].keys());
 }
 
@@ -61,8 +61,8 @@ test('Computed refs', () => {
         const d = computed(() => a.toUpperCase() + b);
     });`);
 
-    equal(keys(scope, 'dependencies'), ['d']);
-    equal(scope.dependencies.get('d'), new Set(['a', 'b']));
+    equal(keys(scope, 'computed'), ['d']);
+    equal(scope.computed.get('d')?.deps, new Set(['a', 'b']));
 });
 
 test('Template variables', async () => {
@@ -74,9 +74,9 @@ test('Template variables', async () => {
     equal(keys(template.scope, 'usages'), ['innerValue', 'enabled', 'uppercaseFullName', 'fullName', 'name', 'items', 'item', 'onItemClick']);
     equal(keys(template.scope, 'updates'), ['innerValue']);
 
-    equal(keys(scope, 'dependencies'), ['fullName', 'uppercaseFullName']);
-    equal(scope.dependencies.get('fullName'), new Set(['enabled', 'name']));
-    equal(scope.dependencies.get('uppercaseFullName'), new Set(['fullName']));
+    equal(keys(scope, 'computed'), ['fullName', 'uppercaseFullName']);
+    equal(scope.computed.get('fullName')?.deps, new Set(['enabled', 'name']));
+    equal(scope.computed.get('uppercaseFullName')?.deps, new Set(['fullName']));
 });
 
 test('Declare props as argument', () => {

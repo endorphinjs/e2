@@ -4,11 +4,18 @@ import Scope from './Scope';
 import { SymbolAnalysisResult, TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
 import parse, { type AST } from '../parser';
 import Patcher, { patcherFromNode, type NodeMapping } from './Patcher';
-import { capitalize } from '../shared/utils';
+import { capitalize, quoted } from '../shared/utils';
 
 interface Patch {
     pos: number;
     text: string;
+}
+
+interface Mask {
+    /** Биты маски */
+    bits: number;
+    /** Символы из скоупа, которые испольховались в маске */
+    symbols: string[];
 }
 
 /**
@@ -36,7 +43,7 @@ export default class ComponentDeclaration {
      * @param node AST-узел функции-фабрики компонента
      */
     constructor(public ctx: Context, public node: ESTree.Function) {
-        const { scope, fnScopes, template } = runSymbolAnalysis(node, ctx.endorphin);
+        const { scope, fnScopes, template } = runSymbolAnalysis(node, ctx);
         this.scope = scope;
         this.fnScopes = fnScopes;
 
@@ -47,9 +54,21 @@ export default class ComponentDeclaration {
                 entry: template.entry
             };
 
+            // Собираем символы, которые используются в шаблоне
             for (const symbol of getTemplateSymbols(scope, template.scope)) {
                 this.pushSymbol(symbol);
             }
+
+            // Собираем символы, которые используются в computed-переменных
+            scope.computed.forEach((entry) => {
+                for (const dep of entry.deps) {
+                    if (!scope.computed.has(dep)) {
+                        // Если зависимость является computed-свойством, не добавляем
+                        // её в скоуп, так как можем самостоятельно отследить её
+                        this.pushSymbol(dep);
+                    }
+                }
+            });
         }
     }
 
@@ -92,8 +111,11 @@ export default class ComponentDeclaration {
             patcher.prepend(patch.pos, patch.text, true);
         }
 
+        this.patchComputed(patcher);
+
         // TODO сгенерировать код для эффектов
         // TODO скомпилировать шаблоны
+        // TODO сгенерировать код обновления пропсов
     }
 
     /**
@@ -235,6 +257,10 @@ export default class ComponentDeclaration {
         return { name, modifiers };
     }
 
+    /**
+     * Патчинг инвалидации данных: все изменения отслеживаемых локальных переменных
+     * заворачивает в вызов `invalidate`
+     */
     private patchInvalidate(patcher: Patcher, name: string, node: ESTree.Node) {
         const index = this.scopeSymbols.get(name);
         if (index == null) {
@@ -245,6 +271,46 @@ export default class ComponentDeclaration {
                 : '';
             patcher.wrap(node, `${this.invalidateSymbol}(${index}, `, `${suffix})`);
         }
+    }
+
+    /**
+     * Патчит computed-значения
+     */
+    private patchComputed(patcher: Patcher) {
+        const { scope } = this;
+        scope.computed.forEach((entry, id) => {
+            let slot = this.scopeSymbols.get(id);
+            const deps: string[] = [];
+            for (const symbol of entry.deps) {
+                if (scope.computed.has(symbol)) {
+                    deps.push(quoted(symbol));
+                } else if (this.scopeSymbols.has(symbol)) {
+                    deps.push(String(this.scopeSymbols.get(symbol)));
+                } else {
+                    this.ctx.warn(`Unexpected scope symbol "${symbol}"`, entry.node);
+                }
+            }
+
+            if (deps.length || slot != null) {
+                let args = `, [${deps.join(', ')}]`;
+                if (slot != null) {
+                    args += `, ${slot}`;
+                }
+
+                patcher.append(entry.node.end - 1, args);
+            }
+
+            // Заворачиваем все чтения computed-переменной в вызовы
+            const usages = scope.usages.get(id);
+            if (usages) {
+                for (let node of usages) {
+                    if (node.type === 'MemberExpression') {
+                        node = node.object;
+                    }
+                    patcher.wrap(node, `${this.ctx.useInternal('getComputed')}(`, ')');
+                }
+            }
+        });
     }
 
     private pushSymbol(name: string) {
@@ -258,45 +324,52 @@ export default class ComponentDeclaration {
      */
     private bootstrap(): Patch[] {
         const result: Patch[] = [];
-        const templateScope = this.templateSrc!.scope;
 
-        let createContext = `${this.ctx.useInternal('createContext')}();`;
-        if (this._invalidateSymbol) {
-            createContext = `const ${this._invalidateSymbol} = ${createContext}`;
-        }
         result.push({
             pos: this.getInsertionPoint('before'),
-            text: createContext
+            text: this.createContext()
         });
 
         if (this.scopeSymbols.size) {
-            const setup = this.ctx.useInternal('setupContext');
-
-            // Собираем маску шаблона из переменных, от которых зависит рендеринг
-            let templateMask = 0;
-            let templateMaskComment: string[] = [];
-            for (const symbol of templateScope.usages.keys()) {
-                if (!this.scope.updates.has(symbol)) {
-                    // Значение не меняется: ре-рендеринг шаблона не зависит от него
-                    continue;
-                }
-
-                const index = this.scopeSymbols.get(symbol);
-                if (index != null) {
-                    templateMask |= 1 << index;
-                    templateMaskComment.push(symbol);
-                } else {
-                    this.ctx.warn(`Unknown template symbol: "${symbol}"`);
-                }
-            }
-
             result.push({
                 pos: this.getInsertionPoint('after'),
-                text: `${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${templateMask} /* ${templateMaskComment.join(' | ')} */);`
+                text: this.setupContext()
             });
         }
 
         return result;
+    }
+
+    /**
+     * Возвращает код для создания контекста рендеринга
+     */
+    private createContext(): string {
+        let createContext = `${this.ctx.useInternal('createContext')}();`;
+        if (this._invalidateSymbol) {
+            createContext = `const ${this._invalidateSymbol} = ${createContext}`;
+        }
+
+        return createContext;
+    }
+
+    /**
+     * Возвращает код для настройки контекста
+     */
+    private setupContext(): string {
+        const templateScope = this.templateSrc!.scope;
+
+        // Собираем маску шаблона из переменных, от которых зависит рендеринг
+        const refs: string[] = [];
+        for (const symbol of templateScope.usages.keys()) {
+            // Если значение не меняется, ре-рендеринг шаблона не зависит от него
+            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {
+                refs.push(symbol);
+            }
+        }
+
+        const setup = this.ctx.useInternal('setupContext');
+        const mask = this.getMask(refs);
+        return `${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${mask.bits} /* ${mask.symbols.join(' | ')} */);`;
     }
 
     /**
@@ -305,9 +378,17 @@ export default class ComponentDeclaration {
     private shouldInvalidate(symbol: string): boolean {
         const { scope, templateSrc } = this;
 
-        // TODO проверить на участие символа в computed-примитивах
-        return scope.declarations.has(symbol)
-            && templateSrc?.scope.usages.has(symbol) || false;
+        if (scope.declarations.has(symbol) && templateSrc?.scope.usages.has(symbol)) {
+            return true;
+        }
+
+        for (const computed of scope.computed.values()) {
+            if (computed.deps.has(symbol)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -332,6 +413,27 @@ export default class ComponentDeclaration {
 
         // Тело функции — выражение
         return node.body.start;
+    }
+
+    /**
+     * Собирает маску для указанных символов
+     * @param symbols
+     */
+    private getMask(refs: string[]): Mask {
+        let bits = 0;
+        const symbols: string[] = [];
+
+        for (const symbol of refs) {
+            const index = this.scopeSymbols.get(symbol);
+            if (index != null) {
+                bits |= 1 << index;
+                symbols.push(symbol);
+            } else {
+                this.ctx.warn(`Unknown template symbol: "${symbol}"`);
+            }
+        }
+
+        return { bits, symbols };
     }
 }
 

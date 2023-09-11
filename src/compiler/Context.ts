@@ -9,7 +9,7 @@ type Pos = [start: number, end: number];
 type PosSource = number | Pos | ESTree.Node;
 
 /** Приватные функции модуля */
-type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext';
+type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext' | 'getComputed';
 
 /** Путь к модулю с приватным функциями */
 const internalModule = 'endorphin/internal';

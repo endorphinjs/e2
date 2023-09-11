@@ -24,3 +24,10 @@ export function last<T>(arr: T[]): T | undefined {
 export function capitalize(str: string): string {
     return str[0].toUpperCase() + str.slice(1);
 }
+
+/**
+ * Возвращает указанную строку в кавычках, которую можно вставлять в JS-код
+ */
+export function quoted(str: string, quote = '\''): string {
+    return `${quote}${str.replaceAll(quote, `\\${quote}`)}${quote}`;
+}
