@@ -11,8 +11,8 @@ import type * as ESTree from 'estree';
 
 // Endorphin template AST
 export type ENDNode = ESTree.BaseNode;
-
-export type ENDStatement = ENDElement | ENDContent | ENDAttributeStatement | ENDAddClassStatement | ENDControlStatement;
+export type ENDTemplateNode = ENDElement | ENDAttributeStatement | ENDAddClassStatement | ENDControlStatement;
+export type ENDStatement = ENDTemplateNode | ENDContent;
 export type ENDControlStatement = ENDIfStatement | ENDChooseStatement | ENDForEachStatement;
 export type ENDAttributeName = string | ENDContent;
 export type ENDAttributeValue = ENDContent | null;

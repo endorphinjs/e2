@@ -3,7 +3,7 @@ import Context from './Context';
 import Scope from './Scope';
 import { SymbolAnalysisResult, TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
 import parse, { type AST } from '../parser';
-import Patcher, { patcherFromNode, type NodeMapping } from './Patcher';
+import Patcher from './Patcher';
 import { capitalize, quoted } from '../shared/utils';
 
 interface Patch {
@@ -27,6 +27,8 @@ const supportedModifiers = new Set(['stop', 'stopPropagation', 'prevent', 'preve
  * Декларация компонента: его внутренний скоуп и патчи для финального кода
  */
 export default class ComponentDeclaration {
+    /** Имя компонента */
+    public name = 'component';
     public scope: Scope;
     public template?: {
         ast: AST.ENDTemplate;
@@ -37,12 +39,23 @@ export default class ComponentDeclaration {
     private _invalidateSymbol: string | undefined;
     private scopeSymbols = new Map<string, number>();
     private templateSrc?: TemplateSource;
+    /**
+     * Лукап узлов в AST шаблона и соответствующих индексов в скоупе.
+     * Если индекс присутствует, значит переменная для узла была объявлена
+     * внутри фабрики компонента и её присвоен указанный слот. Если нет —
+     * переменная объявлена за пределами фабрики
+     */
+    private astNodeLookup = new Map<ESTree.Node, number>();
 
     /**
      * @param ctx Контекст компиляции модуля
      * @param node AST-узел функции-фабрики компонента
      */
     constructor(public ctx: Context, public node: ESTree.Function) {
+        if (node.type === 'FunctionDeclaration' && node.id) {
+            this.name = node.id.name;
+        }
+
         const { scope, fnScopes, template } = runSymbolAnalysis(node, ctx);
         this.scope = scope;
         this.fnScopes = fnScopes;
@@ -54,8 +67,8 @@ export default class ComponentDeclaration {
                 entry: template.entry
             };
 
-            // Собираем символы, которые используются в шаблоне
-            for (const symbol of getTemplateSymbols(scope, template.scope)) {
+            // Собираем символы, которые понадобятся для скоупа
+            for (const symbol of getTemplateScopeSymbols(scope, template.scope)) {
                 this.pushSymbol(symbol);
             }
 
@@ -119,6 +132,13 @@ export default class ComponentDeclaration {
     }
 
     /**
+     * Возвращает индекс для AST-узла переменной, используемой в шаблоне
+     */
+    public getScopeSlot(node: ESTree.Node): number | undefined {
+        return this.astNodeLookup.get(node);
+    }
+
+    /**
      * Компилирует обработчик событий при необходимости и возвращает код для него.
      * Обработчик компилируется только если он является выражением либо содержит
      * модификаторы в самом событии. Если обработчик скомпилировался, в самой
@@ -136,8 +156,7 @@ export default class ComponentDeclaration {
             return;
         }
 
-        const nodeMapping: NodeMapping = new Map();
-        const patcher = patcherFromNode(this.ctx.code, value, nodeMapping);
+        const patcher = new Patcher(this.ctx.code, value);
         let eventHandlerSymbol = '';
 
         if (isFunctionDeclaration(value)) {
@@ -152,7 +171,7 @@ export default class ComponentDeclaration {
             // модификаторы. Если функция анонимная, дать ей имя
             if (!('id' in value) || !value.id) {
                 eventHandlerSymbol = this.scope.id(`on${capitalize(name)}`);
-                patcher.prepend(0, `const ${eventHandlerSymbol} = `);
+                patcher.prepend(value.start, `const ${eventHandlerSymbol} = `);
             } else {
                 eventHandlerSymbol = value.id.name;
             }
@@ -166,9 +185,9 @@ export default class ComponentDeclaration {
                     // воспользуемся скоупом функции, чтобы выделить отдельную переменную
 
                     eventSymbol = scope.id('event');
-                    const pos = patcher.code.indexOf('(');
+                    const pos = patcher.code.slice(value.start, value.end).indexOf('(');
                     if (pos !== -1) {
-                        patcher.prepend(pos, eventSymbol);
+                        patcher.prepend(value.start + pos, eventSymbol);
                     } else {
                         this.ctx.warn('Invalid event declaration', value);
                     }
@@ -184,12 +203,7 @@ export default class ComponentDeclaration {
                         patcher.append(value.body.start + 1, mod(eventSymbol));
                     } else {
                         // Тело без скобок, просто выражение
-                        const mappedBody = nodeMapping.get(value.body);
-                        if (mappedBody) {
-                            patcher.wrap(mappedBody, `{ ${mod(eventSymbol)} return `, ' }');
-                        } else {
-                            this.ctx.warn('Unable to add modifiers: no mapped body', value.body);
-                        }
+                        patcher.wrap(value.body, `{ ${mod(eventSymbol)} return `, ' }');
                     }
                 }
             }
@@ -202,7 +216,7 @@ export default class ComponentDeclaration {
                 eventSymbol = 'event';
                 modStr = mod(eventSymbol);
             }
-            patcher.wrap(patcher.ast, `function ${eventHandlerSymbol}(${eventSymbol}) { ${modStr}`, ' }');
+            patcher.wrap(value, `function ${eventHandlerSymbol}(${eventSymbol}) { ${modStr}`, ' }');
         }
 
         if (eventHandlerSymbol) {
@@ -216,10 +230,7 @@ export default class ComponentDeclaration {
                     continue;
                 }
                 for (let n of nodes) {
-                    const mapped = nodeMapping.get(n);
-                    if (mapped) {
-                        this.patchInvalidate(patcher, symbol, mapped);
-                    }
+                    this.patchInvalidate(patcher, symbol, n);
                 }
             }
 
@@ -316,6 +327,13 @@ export default class ComponentDeclaration {
     private pushSymbol(name: string) {
         if (!this.scopeSymbols.has(name)) {
             this.scopeSymbols.set(name, this.scopeSymbols.size);
+            const usages = this.templateSrc?.scope.usages.get(name);
+            if (usages) {
+                const index = this.scopeSymbols.get(name)!;
+                for (const node of usages) {
+                    this.astNodeLookup.set(node, index);
+                }
+            }
         }
     }
 
@@ -362,8 +380,7 @@ export default class ComponentDeclaration {
         const refs: string[] = [];
         for (const symbol of templateScope.usages.keys()) {
             // Если значение не меняется, ре-рендеринг шаблона не зависит от него
-            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {
-                refs.push(symbol);
+            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {                refs.push(symbol);
             }
         }
 
@@ -452,12 +469,25 @@ function eventModifiers(modifiers: Set<string>): ((name: string) => string) | un
     }
 }
 
-function getTemplateSymbols(componentScope: Scope, templateScope: Scope): string[] {
+/**
+ * Возвращает список символов, которые используются в шаблоне и которые были
+ * объявлены внутри фабрики компонента
+ */
+function getTemplateScopeSymbols(componentScope: Scope, templateScope: Scope): string[] {
     const lookup = new Map<string, number>();
-    const symbols = [
+    const allKeys = new Set([
         ...templateScope.usages.keys(),
         ...templateScope.updates.keys(),
-    ];
+    ]);
+    const symbols: string[] = [];
+
+    // Оставляем только те символы, которые были объявлены в фабрике
+    for (const key of allKeys) {
+        if (componentScope.declarations.has(key)) {
+            lookup.set(key, symbols.length);
+            symbols.push(key);
+        }
+    }
 
     const getWeight = (name: string) => {
         if (componentScope.updates.has(name) && componentScope.declarations.has(name)) {
@@ -470,8 +500,6 @@ function getTemplateSymbols(componentScope: Scope, templateScope: Scope): string
 
         return 0;
     }
-
-    symbols.forEach((name, ix) => !lookup.has(name) && lookup.set(name, ix));
 
     // Символы, которые обновляются, нужно подтянуть ближе к началу, чтобы они
     // уместились в ограничение маски 2^31 - 1

@@ -9,7 +9,9 @@ type Pos = [start: number, end: number];
 type PosSource = number | Pos | ESTree.Node;
 
 /** Приватные функции модуля */
-type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext' | 'getComputed';
+export type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext' | 'getComputed'
+    | 'attach'
+    | 'element' | 'text' | 'attribute';
 
 /** Путь к модулю с приватным функциями */
 const internalModule = 'endorphin/internal';
@@ -24,7 +26,12 @@ export default class Context {
     public patcher: Patcher;
 
     private usedInternals = new Map<InternalSymbols, string>();
+    /** Дополнительные чанки для шаблона */
+    private chunks: string[] = [];
 
+    /**
+     * @param code Исходный код JS-модуля
+     */
     constructor(public code: string) {
         this.ast = parse(code, { ecmaVersion: 'latest', sourceType: 'module' }) as ESTree.Program;
         this.endorphin = new EndorphinContext(this.ast);
@@ -90,7 +97,14 @@ export default class Context {
             prefix += `import { ${imports.join(', ')} } from '${internalModule}';\n`;
         }
 
-        return prefix + this.patcher.render();
+        return prefix + this.patcher.render() + this.chunks.map(chunk => '\n\n' + chunk);
+    }
+
+    /**
+     * Добавляет фрагмент кода для вывода в конце модуля
+     */
+    push(chunk: string) {
+        this.chunks.push(chunk);
     }
 
     /**

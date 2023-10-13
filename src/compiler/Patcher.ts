@@ -1,8 +1,3 @@
-import type * as ESTree from 'estree';
-import { replace } from 'estraverse';
-
-export type NodeMapping = Map<ESTree.Node, ESTree.Node>;
-
 interface Patch {
     start: number;
     end: number;
@@ -10,22 +5,29 @@ interface Patch {
     side: -1 | 0 | 1;
 }
 
+type PatcherRange = [start: number, end: number] | { start: number, end: number };
+
 export default class Patcher {
     private patches: Patch[] = [];
+    private start = 0;
+    private end: number;
 
-    constructor(public code: string, public ast: ESTree.Node) {}
+    constructor(public code: string, limit?: number | PatcherRange) {
+        this.end = code.length;
+        if (typeof limit === 'number') {
+            this.start = limit;
+        } else if (limit) {
+            this.start = getStart(limit);
+            this.end = getEnd(limit);
+        }
+    }
 
     /**
      * Добавляет `value` в указанную позицию. Если в ней уже были изменения,
      * добавит их в конце существующих изменений
      */
     append(pos: number, value: string) {
-        this.patches.push({
-            start: pos,
-            end: pos,
-            value,
-            side: 1,
-        });
+        this.push(pos, pos, value, 1);
     }
 
     /**
@@ -37,32 +39,29 @@ export default class Patcher {
             value += this.indent(pos);
         }
 
-        this.patches.push({
-            start: pos,
-            end: pos,
-            value,
-            side: -1,
-        });
+        this.push(pos, pos, value, -1);
     }
 
     /**
      * Заворачивает значение указанного узла
      */
-    wrap(node: ESTree.Node, before: string, after: string) {
-        this.prepend(node.start, before);
-        this.append(node.end, after);
+    wrap(range: PatcherRange, before: string, after: string) {
+        this.prepend(getStart(range), before);
+        this.append(getEnd(range), after);
     }
 
     /**
      * Заменяет содержимое указанного узла на новое
      */
-    replace(node: ESTree.Node, value: string) {
-        this.patches.push({
-            start: node.start,
-            end: node.end,
-            value,
-            side: 0
-        });
+    replace(range: PatcherRange, value: string) {
+        this.push(getStart(range), getEnd(range), value);
+    }
+
+    /**
+     * Добавляет патч с указанными параметрами
+     */
+    push(start: number, end: number, value = '', side: 0 | -1 | 1 = 0) {
+        this.patches.push({ start, end, value, side });
     }
 
     /**
@@ -70,8 +69,11 @@ export default class Patcher {
      */
     render() {
         const lookup = new Map<Patch, number>();
-        this.patches.forEach((patch, i) => lookup.set(patch, i));
-        const patches = this.patches.slice().sort((a, b) => {
+        const { start, end, code } = this;
+
+        const patches = this.patches.filter(p => p.start >= start && p.end <= end);
+        patches.forEach((patch, i) => lookup.set(patch, i));
+        patches.sort((a, b) => {
             const diff = a.start - b.start || a.side - b.side;
             if (diff) {
                 return diff;
@@ -86,34 +88,22 @@ export default class Patcher {
             const bIx = lookup.get(b)!;
             return a.side === -1 ? aIx - bIx : bIx - aIx;
         });
-        let offset = 0;
+        let offset = start;
         let result = '';
-        const { code } = this;
 
         for (const patch of patches) {
             result += code.slice(offset, patch.start) + patch.value;
             offset = patch.end;
         }
 
-        return result + code.slice(offset);
-    }
-
-    /**
-     * Создаёт новый инстанс патчера в контексте указанного узла. Новый патчер
-     * будет содержать только фрагмент кода, который соответствует узлу `node`
-     * и его содержимому. Также будет создана глубока копия узла `node`
-     * с правильными позициями в коде
-     * @param map Если указан, в него запишется маппинг старых узлов на новые
-     */
-    slice(node: ESTree.Node, map?: NodeMapping): Patcher {
-        return patcherFromNode(this.code, node, map);
+        return result + code.slice(offset, end);
     }
 
     /**
      * Возвращает подстроку для указанного узла
      */
-    substr(node: ESTree.Node): string {
-        return this.code.slice(node.start, node.end);
+    substr(range: PatcherRange): string {
+        return this.code.slice(getStart(range), getEnd(range));
     }
 
     /**
@@ -137,43 +127,10 @@ export default class Patcher {
     }
 }
 
-/**
- * Создаёт инстанс патчера в контексте указанного узла. Новый патчер
- * будет содержать только фрагмент кода, который соответствует узлу `node`
- * и его содержимому. Также будет создана глубока копия узла `node`
- * с правильными позициями в коде
- * @param map Если указан, в него запишется маппинг старых узлов на новые
- */
-export function patcherFromNode(code: string, node: ESTree.Node, map?: NodeMapping): Patcher {
-    const offset = node.start;
-    const replaced = replace(node, {
-        enter(n) {
-            const copy = cloneNode(n);
-            copy.start -= offset;
-            copy.end -= offset;
-            map?.set(n, copy);
-            return copy;
-        }
-    });
-
-    return new Patcher(code.slice(node.start, node.end), replaced);
+function getStart(range: PatcherRange): number {
+    return Array.isArray(range) ? range[0] : range.start;
 }
 
-/**
- * Делает неглубокий клон указанного узла: клонируется сам узел, но не дочерние
- * узлы
- */
-function cloneNode<T extends ESTree.Node>(node: T): T {
-    node = {...node};
-    for (const key of (Object.keys(node) as Array<keyof T>)) {
-        let value = node[key];
-        if (Array.isArray(value)) {
-            // @ts-ignore Copy array value
-            node[key] = [...value];
-        } else if (value != null && typeof value === 'object') {
-            node[key] = { ...value };
-        }
-    }
-
-    return node;
+function getEnd(range: PatcherRange): number {
+    return Array.isArray(range) ? range[1] : range.end;
 }

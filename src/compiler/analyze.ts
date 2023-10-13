@@ -183,7 +183,7 @@ function handleIdentifier(scope: Scope, node: ESTree.Identifier, parents: ESTree
         return ix !== -1
             ? (parents[ix] as ESTree.Function).params.includes(parents[ix + 1] as ESTree.Pattern)
             : false;
-    }
+    };
 
     switch (parent?.type) {
         // Fast path: быстрые типовые проверки без глубокого исследования узлов
@@ -225,6 +225,7 @@ function handleIdentifier(scope: Scope, node: ESTree.Identifier, parents: ESTree
 
         case 'BinaryExpression':
         case 'ConditionalExpression':
+        case 'UnaryExpression':
             return scope.addUsage(node.name, node);
 
         case 'CatchClause':
