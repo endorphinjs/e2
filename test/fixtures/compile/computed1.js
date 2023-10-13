@@ -12,7 +12,7 @@ export function Computed1({ firstName, lastName }) {
     }
 
     setupContext([onClick, upperFullname, firstName, lastName], Computed1_template, 2 /* upperFullname */);
-    return html`<div @click=${onClick}>${upperFullname}</div>`;
+    return (nextProps) => { invalidate(2, firstName = nextProps.firstName);invalidate(3, lastName = nextProps.lastName) };
 }
 
 

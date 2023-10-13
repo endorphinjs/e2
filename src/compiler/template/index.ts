@@ -22,7 +22,7 @@ export default function compileTemplate(component: ComponentDeclaration) {
     const fn = new TemplateFunction(component, id, [ctxArg, stageArg, refsArgs]);
     const stack: TemplateVariable[] = [];
 
-    traverseTemplate(template.ast, {
+    traverseTemplate(template, {
         enter(node) {
             if (node.type === 'ENDElement') {
                 stack.push(element(fn, node, last(stack)));

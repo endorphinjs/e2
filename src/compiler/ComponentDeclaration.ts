@@ -27,15 +27,12 @@ export default class ComponentDeclaration {
     /** Имя компонента */
     public name = 'component';
     public scope: Scope;
-    public template?: {
-        ast: AST.ENDTemplate;
-        entry: ESTree.Node;
-    };
+    public template?: AST.ENDTemplate;
 
     public fnScopes: SymbolAnalysisResult['fnScopes'];
     private _invalidateSymbol: string | undefined;
     private scopeSymbols = new Map<string, number>();
-    private templateSrc?: TemplateSource;
+    private templateSource?: TemplateSource;
     /**
      * Лукап узлов в AST шаблона и соответствующих индексов в скоупе.
      * Если индекс присутствует, значит переменная для узла была объявлена
@@ -58,11 +55,8 @@ export default class ComponentDeclaration {
         this.fnScopes = fnScopes;
 
         if (template) {
-            this.templateSrc = template;
-            this.template = {
-                ast: parse(template.ast.quasi),
-                entry: template.entry
-            };
+            this.templateSource = template;
+            this.template = parse(template.ast.quasi);
 
             // Собираем символы, которые понадобятся для скоупа
             for (const symbol of getTemplateScopeSymbols(scope, template.scope)) {
@@ -94,13 +88,13 @@ export default class ComponentDeclaration {
      * Компилирует текущие компонент и записывает все изменения в указанный патчер
      */
     public compile(patcher: Patcher) {
-        const { template, templateSrc, scope } = this;
-        if (!template || !templateSrc) {
+        const { template, scope } = this;
+        if (!template) {
             return;
         }
 
         // Компилируем все обработчики событий
-        for (const event of template.ast.events) {
+        for (const event of template.events) {
             const handler = compileEventHandler(this, event.handler);
             if (handler) {
                 event.handler.value = handler.node;
@@ -126,11 +120,13 @@ export default class ComponentDeclaration {
             patcher.prepend(patch.pos, patch.text, true);
         }
 
+        // Обновление computed-свойств
         this.patchComputed(patcher);
 
+        // Обновление пропсов
+        this.propsUpdate(patcher);
+
         // TODO сгенерировать код для эффектов
-        // TODO скомпилировать шаблоны
-        // TODO сгенерировать код обновления пропсов
     }
 
     /**
@@ -199,7 +195,7 @@ export default class ComponentDeclaration {
     private pushSymbol(name: string) {
         if (!this.scopeSymbols.has(name)) {
             this.scopeSymbols.set(name, this.scopeSymbols.size);
-            const usages = this.templateSrc?.scope.usages.get(name);
+            const usages = this.templateSource?.scope.usages.get(name);
             if (usages) {
                 const index = this.scopeSymbols.get(name)!;
                 for (const node of usages) {
@@ -246,7 +242,7 @@ export default class ComponentDeclaration {
      * Возвращает код для настройки контекста
      */
     private setupContext(templateSymbol: string): string {
-        const templateScope = this.templateSrc!.scope;
+        const templateScope = this.templateSource!.scope;
 
         // Собираем маску шаблона из переменных, от которых зависит рендеринг
         const refs: string[] = [];
@@ -263,10 +259,46 @@ export default class ComponentDeclaration {
     }
 
     /**
+     * Возвращает код функции обновления пропсов
+     */
+    private propsUpdate(patcher: Patcher) {
+        const { ast } = this.templateSource!;
+        const nextPropsArg = this.scope.id('nextProps');
+        const chunks: string[] = [];
+
+        this.scope.props.forEach(([propName, propType], symbol) => {
+            let chunk = '';
+            switch (propType) {
+                case 'container':
+                    chunk = `${symbol} = ${nextPropsArg}`;
+                    break;
+                case 'prop':
+                    chunk = `${symbol} = ${nextPropsArg}.${propName}`;
+                    break;
+                case 'rest':
+                    // TODO поддержать rect-аргумент
+                    break;
+            }
+
+            // TODO найти декларацию пропсов и заменить `const` на `let`
+
+            if (chunk) {
+                const index = this.scopeSymbols.get(symbol);
+                if (index != null) {
+                    chunk = `${this.invalidateSymbol}(${index}, ${chunk})`;
+                }
+                chunks.push(chunk);
+            }
+        });
+
+        patcher.replace(ast, `(${nextPropsArg}) => { ${chunks.join(';')} }`);
+    }
+
+    /**
      * Вернёт `true` если указанный символ требует инвалидации на изменение
      */
     private shouldInvalidate(symbol: string): boolean {
-        const { scope, templateSrc } = this;
+        const { scope, templateSource: templateSrc } = this;
 
         if (scope.declarations.has(symbol) && templateSrc?.scope.usages.has(symbol)) {
             return true;

@@ -16,7 +16,7 @@ export function MyComponent({ num }) {
 
     function onMousedown() { inner++ }
     setupContext([num, update, onMousedown], MyComponent_template, 1 /* num */);
-    return html`<div @click=${update} @mousedown=${inner++}>${num}</div>`;
+    return (nextProps) => { invalidate(0, num = nextProps.num) };
 }
 
 function MyComponent_template(ctx, stage, refs) {

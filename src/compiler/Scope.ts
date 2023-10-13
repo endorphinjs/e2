@@ -1,5 +1,12 @@
 import type * as ESTree from 'estree';
 
+
+/**
+ * Типы пропсов:
+ * — `prop`: конкретные пропсы типа `MyComponent({ prop1, prop2 })`
+ * — `container`: контейнер пропсов, первый агрумент компонента: `MyComponent(propsContainer)`
+ * — `rest`: rest-переменная из деструкрутризации: `MyComponent({...rest})`
+ */
 type PropType = 'prop' | 'container' | 'rest';
 type PropInfo = [propName: string, propType: PropType];
 interface ComputedRef {
