@@ -32,14 +32,12 @@ export default function compileElement(fn: TemplateFunction, elem: ENDElement, p
         } else {
             // TODO обработать переполнение маски для index > 31
             let mask = 0;
-            let usesMask = false;
             const expr = fn.expression(attr.value, index => {
-                mask |= index;
-                usesMask = true;
+                mask |= 1 << index;
                 return `${fn.scopeSymbol.id}[${index}]`;
             });
             fn.mount(t`${internal('attribute')}(${v}, ${attr.name}, ${raw(expr)});`);
-            if (usesMask) {
+            if (mask) {
                 // XXX маска не используется, если символ объявлен за пределами
                 // компонента. Надо ли это учитывать?
                 fn.update(t`(${fn.dirtySymbol} & ${mask}) && ${internal('attribute')}(${v}, ${attr.name}, ${raw(expr)});`);
