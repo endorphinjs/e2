@@ -4,9 +4,7 @@ import { traverse } from 'estraverse';
 import EndorphinContext from './EndorphinContext';
 import Scope from './Scope';
 import Patcher from './Patcher';
-
-type Pos = [start: number, end: number];
-type PosSource = number | Pos | ESTree.Node;
+import { Logger } from './logger';
 
 /** Приватные функции модуля */
 export type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext' | 'getComputed'
@@ -19,7 +17,7 @@ const internalModule = 'endorphin/internal';
 /**
  * Контекст компиляции исходного JS-модуля
  */
-export default class Context {
+export default class Context extends Logger {
     public ast: ESTree.Program;
     public endorphin: EndorphinContext;
     public scope: Scope;
@@ -33,6 +31,7 @@ export default class Context {
      * @param code Исходный код JS-модуля
      */
     constructor(public code: string) {
+        super();
         this.ast = parse(code, { ecmaVersion: 'latest', sourceType: 'module' }) as ESTree.Program;
         this.endorphin = new EndorphinContext(this.ast);
         // TODO собрать символы скоупа из модуля
@@ -70,20 +69,6 @@ export default class Context {
     }
 
     /**
-     * Печатает Warning при парсинге или компиляции шаблона
-     */
-    warn(message: string, pos?: PosSource) {
-        console.warn(message + posSuffix(pos));
-    }
-
-    /**
-     * Выбрасывает исключение
-     */
-    error(message: string, pos?: PosSource) {
-        throw new Error(message = posSuffix(pos));
-    }
-
-    /**
      * Возвращает обновлённый код модуля с скомпилированными модулями и шаблонами
      */
     render() {
@@ -118,19 +103,4 @@ export default class Context {
 
         return this.usedInternals.get(symbol)!;
     }
-}
-
-function posSuffix(pos?: PosSource): string {
-    if (pos != null) {
-        if (typeof pos === 'number') {
-            return ` at ${pos}`;
-        }
-
-        if (Array.isArray(pos)) {
-            return ` at ${pos[0]}:${pos[1]}`;
-        }
-        return ` at ${pos.start}:${pos.end}`;
-    }
-
-    return '';
 }

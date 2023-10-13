@@ -1,10 +1,12 @@
 import type * as ESTree from 'estree';
 import Context from './Context';
 import Scope from './Scope';
-import { SymbolAnalysisResult, TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
-import parse, { type AST } from '../parser';
 import Patcher from './Patcher';
-import { capitalize, quoted } from '../shared/utils';
+import logger from './logger';
+import { SymbolAnalysisResult, TemplateSource, runSymbolAnalysis } from './analyze';
+import parse, { type AST } from '../parser';
+import { quoted } from '../shared/utils';
+import compileEventHandler from './template/event';
 
 interface Patch {
     pos: number;
@@ -19,11 +21,6 @@ interface Mask {
 }
 
 /**
- * Поддерживаемые модификаторы событий
- */
-const supportedModifiers = new Set(['stop', 'stopPropagation', 'prevent', 'preventDefault', 'passive']);
-
-/**
  * Декларация компонента: его внутренний скоуп и патчи для финального кода
  */
 export default class ComponentDeclaration {
@@ -35,7 +32,7 @@ export default class ComponentDeclaration {
         entry: ESTree.Node;
     };
 
-    private fnScopes: SymbolAnalysisResult['fnScopes'];
+    public fnScopes: SymbolAnalysisResult['fnScopes'];
     private _invalidateSymbol: string | undefined;
     private scopeSymbols = new Map<string, number>();
     private templateSrc?: TemplateSource;
@@ -85,7 +82,7 @@ export default class ComponentDeclaration {
         }
     }
 
-    private get invalidateSymbol(): string {
+    public get invalidateSymbol(): string {
         if (!this._invalidateSymbol) {
             this._invalidateSymbol = this.scope.id('invalidate');
         }
@@ -104,9 +101,11 @@ export default class ComponentDeclaration {
 
         // Компилируем все обработчики событий
         for (const event of template.ast.events) {
-            const patch = this.compileEventHandler(event.handler);
-            if (patch) {
-                patcher.prepend(patch.pos, patch.text, true);
+            const handler = compileEventHandler(this, event.handler);
+            if (handler) {
+                event.handler.value = handler.node;
+                this.pushSymbol(handler.node.name);
+                patcher.prepend(this.getInsertionPoint('after'), handler.code, true);
             }
         }
 
@@ -139,143 +138,13 @@ export default class ComponentDeclaration {
     }
 
     /**
-     * Компилирует обработчик событий при необходимости и возвращает код для него.
-     * Обработчик компилируется только если он является выражением либо содержит
-     * модификаторы в самом событии. Если обработчик скомпилировался, в самой
-     * директиве будет он будет заменён на новый AST-узел.
-     */
-    private compileEventHandler(handler: AST.ENDDirective): Patch | undefined {
-        const { name, modifiers } = this.parseEvent(handler);
-        const { value } = handler;
-        const templateScope = this.templateSrc!.scope;
-        let mod = eventModifiers(modifiers);
-
-        if (!value || (!mod && value.type === 'Identifier')) {
-            // Ничего не надо делать, можно указать переданный указатель как
-            // хэндлер события
-            return;
-        }
-
-        const patcher = new Patcher(this.ctx.code, value);
-        let eventHandlerSymbol = '';
-
-        if (isFunctionDeclaration(value)) {
-            const scope = this.fnScopes.get(value);
-
-            if (!scope) {
-                this.ctx.error('Unknown scope for handler', value);
-                return;
-            }
-
-            // Уже указали функцию, нужно её вынести из шаблона и добавить
-            // модификаторы. Если функция анонимная, дать ей имя
-            if (!('id' in value) || !value.id) {
-                eventHandlerSymbol = this.scope.id(`on${capitalize(name)}`);
-                patcher.prepend(value.start, `const ${eventHandlerSymbol} = `);
-            } else {
-                eventHandlerSymbol = value.id.name;
-            }
-
-            if (mod) {
-                // Определяем название аргумента c событием
-                let eventSymbol = '';
-                const firstArg = value.params[0];
-                if (!firstArg) {
-                    // На случай если внутри коллбэка уже будет своя переменная `event`,
-                    // воспользуемся скоупом функции, чтобы выделить отдельную переменную
-
-                    eventSymbol = scope.id('event');
-                    const pos = patcher.code.slice(value.start, value.end).indexOf('(');
-                    if (pos !== -1) {
-                        patcher.prepend(value.start + pos, eventSymbol);
-                    } else {
-                        this.ctx.warn('Invalid event declaration', value);
-                    }
-                } else if (firstArg.type === 'Identifier') {
-                    eventSymbol = firstArg.name;
-                } else {
-                    this.ctx.warn('Unexpected argument type', firstArg);
-                }
-
-                if (eventSymbol) {
-                    if (value.body.type === 'BlockStatement') {
-                        // Тело функции завёрнуто в {...}, добавляем модификаторы внутрь
-                        patcher.append(value.body.start + 1, mod(eventSymbol));
-                    } else {
-                        // Тело без скобок, просто выражение
-                        patcher.wrap(value.body, `{ ${mod(eventSymbol)} return `, ' }');
-                    }
-                }
-            }
-        } else {
-            // Записали выражение: нужно превратить его в функцию
-            eventHandlerSymbol = this.scope.id(`on${capitalize(name)}`);
-            let eventSymbol = '';
-            let modStr = '';
-            if (mod) {
-                eventSymbol = 'event';
-                modStr = mod(eventSymbol);
-            }
-            patcher.wrap(value, `function ${eventHandlerSymbol}(${eventSymbol}) { ${modStr}`, ' }');
-        }
-
-        if (eventHandlerSymbol) {
-            // Пропатчим обновления, символы которых были объявлены
-            // в скоупе фабрики компонента
-            for (const [symbol, nodes] of templateScope.updates) {
-                if (!this.shouldInvalidate(symbol)) {
-                    // Модификация символа, объявленного за пределами фабрики компонента.
-                    // Либо символ не используется в шаблоне
-                    // TODO а если используется в `computed`?
-                    continue;
-                }
-                for (let n of nodes) {
-                    this.patchInvalidate(patcher, symbol, n);
-                }
-            }
-
-            this.pushSymbol(eventHandlerSymbol);
-            handler.value = {
-                type: 'Identifier',
-                name: eventHandlerSymbol,
-                start: value.start,
-                end: value.end
-            };
-
-            return {
-                pos: this.getInsertionPoint('after'),
-                text: patcher.render()
-            };
-        }
-    }
-
-    /**
-     * Парсит данные о событии и его модификаторов из названия атрибута
-     */
-    private parseEvent(dir: AST.ENDDirective) {
-        const sep = '|';
-        const [name, ...modifiersList] = dir.name.split(sep);
-        const modifiers = new Set<string>();
-        let offset = dir.prefix.length + name.length + sep.length;
-        for (const m of modifiersList) {
-            if (supportedModifiers.has(m)) {
-                modifiers.add(m);
-            } else {
-                this.ctx.warn(`Unknown event modifier "${m}"`, [offset, offset + m.length]);
-            }
-        }
-
-        return { name, modifiers };
-    }
-
-    /**
      * Патчинг инвалидации данных: все изменения отслеживаемых локальных переменных
      * заворачивает в вызов `invalidate`
      */
-    private patchInvalidate(patcher: Patcher, name: string, node: ESTree.Node) {
+    public patchInvalidate(patcher: Patcher, name: string, node: ESTree.Node) {
         const index = this.scopeSymbols.get(name);
         if (index == null) {
-            this.ctx.error(`Unknown scope symbol "${name}"`);
+            logger.error(`Unknown scope symbol "${name}"`);
         } else {
             const suffix = node.type === 'UpdateExpression' && !node.prefix
                 ? `, ${patcher.substr(node.argument)}`
@@ -451,21 +320,6 @@ export default class ComponentDeclaration {
         }
 
         return { bits, symbols };
-    }
-}
-
-function eventModifiers(modifiers: Set<string>): ((name: string) => string) | undefined {
-    let result = '';
-    if (modifiers.has('stop') || modifiers.has('stopPropagation')) {
-        result += `EVENT.stopPropagation();`;
-    }
-
-    if (modifiers.has('prevent') || modifiers.has('preventDefault')) {
-        result += `EVENT.preventDefault();`;
-    }
-
-    if (result) {
-        return name => result.replace(/EVENT/g, name);
     }
 }
 
