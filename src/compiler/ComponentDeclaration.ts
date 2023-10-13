@@ -5,7 +5,7 @@ import Patcher from './Patcher';
 import logger from './logger';
 import { SymbolAnalysisResult, TemplateSource, runSymbolAnalysis } from './analyze';
 import parse, { type AST } from '../parser';
-import { quoted } from '../shared/utils';
+import compileTemplate from './template';
 import compileEventHandler from './template/event';
 
 interface Patch {
@@ -16,7 +16,7 @@ interface Patch {
 interface Mask {
     /** Биты маски */
     bits: number;
-    /** Символы из скоупа, которые испольховались в маске */
+    /** Символы из скоупа, которые использовались в маске */
     symbols: string[];
 }
 
@@ -118,8 +118,11 @@ export default class ComponentDeclaration {
             }
         }
 
+        // Компилируем шаблон и получаем ссылку на функцию шаблона
+        const templateSymbol = compileTemplate(this);
+
         // Код для связывания данных внутри компонента
-        for (const patch of this.bootstrap()) {
+        for (const patch of this.bootstrap(templateSymbol)) {
             patcher.prepend(patch.pos, patch.text, true);
         }
 
@@ -163,7 +166,7 @@ export default class ComponentDeclaration {
             const deps: string[] = [];
             for (const symbol of entry.deps) {
                 if (scope.computed.has(symbol)) {
-                    deps.push(quoted(symbol));
+                    deps.push(symbol);
                 } else if (this.scopeSymbols.has(symbol)) {
                     deps.push(String(this.scopeSymbols.get(symbol)));
                 } else {
@@ -209,7 +212,7 @@ export default class ComponentDeclaration {
     /**
      * Добавляет код, необходимый для инициализации компонента
      */
-    private bootstrap(): Patch[] {
+    private bootstrap(templateSymbol: string): Patch[] {
         const result: Patch[] = [];
 
         result.push({
@@ -220,7 +223,7 @@ export default class ComponentDeclaration {
         if (this.scopeSymbols.size) {
             result.push({
                 pos: this.getInsertionPoint('after'),
-                text: this.setupContext()
+                text: this.setupContext(templateSymbol)
             });
         }
 
@@ -242,20 +245,21 @@ export default class ComponentDeclaration {
     /**
      * Возвращает код для настройки контекста
      */
-    private setupContext(): string {
+    private setupContext(templateSymbol: string): string {
         const templateScope = this.templateSrc!.scope;
 
         // Собираем маску шаблона из переменных, от которых зависит рендеринг
         const refs: string[] = [];
         for (const symbol of templateScope.usages.keys()) {
             // Если значение не меняется, ре-рендеринг шаблона не зависит от него
-            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {                refs.push(symbol);
+            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {
+                refs.push(symbol);
             }
         }
 
         const setup = this.ctx.useInternal('setupContext');
         const mask = this.getMask(refs);
-        return `${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${mask.bits} /* ${mask.symbols.join(' | ')} */);`;
+        return `${setup}([${Array.from(this.scopeSymbols.keys()).join(', ')}], ${templateSymbol}, ${mask.bits} /* ${mask.symbols.join(' | ')} */);`;
     }
 
     /**
@@ -331,7 +335,7 @@ function getTemplateScopeSymbols(componentScope: Scope, templateScope: Scope): s
     const lookup = new Map<string, number>();
     const allKeys = new Set([
         ...templateScope.usages.keys(),
-        ...templateScope.updates.keys(),
+        // ...templateScope.updates.keys(),
     ]);
     const symbols: string[] = [];
 
