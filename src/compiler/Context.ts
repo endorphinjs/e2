@@ -4,6 +4,7 @@ import { traverse } from 'estraverse';
 import EndorphinContext from './EndorphinContext';
 import Scope from './Scope';
 import Patcher from './Patcher';
+import ComponentDeclaration from './ComponentDeclaration';
 import { Logger } from './logger';
 
 /** Приватные функции модуля */
@@ -62,10 +63,15 @@ export default class Context extends Logger {
     }
 
     /**
-     * Выполняет компиляцию объявления компонента
+     * Выполняет компиляцию модуля: находит все компоненты и компилирует их
      */
     compile() {
+        for (const component of this.getComponents()) {
+            const decl = new ComponentDeclaration(this, component);
+            decl.compile();
+        }
 
+        return this.render();
     }
 
     /**

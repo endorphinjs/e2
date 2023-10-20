@@ -54,7 +54,7 @@ export default defineComponent(({ enabled, name }) => {
     //   становятся реактивными: их изменение приводит к ре-рендеру шаблона
     // * можно использовать плагин для Lit, который автоматически подсветит
     //   HTML внутри такой строки
-    return html`<div class="${innerValue % 2 ? 'foo' : 'bar'}"
+    return html`<div class=${innerValue % 2 ? 'foo' : 'bar'}
                      class:enabled=${enabled}>
         <e:if test=${enabled}>
             <p @click=${innerValue++} title=${uppercaseFullName}>${fullName}</p>

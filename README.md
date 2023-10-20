@@ -30,7 +30,7 @@ const items = ['a', 'b', 'c'];
 // Вернётся класс, который в любом месте можно создать так:
 // import MyComponent from './component.ts';
 // const c = new MyComponent(props);
-export default defineComponent(({ enabled, name }: Props) => {
+export default function MyComponent({ enabled, name }: Props) {
     // Вызов текущей функции работает как `willMount()` из предыдущей
     // версии эндорфина
 
@@ -84,7 +84,7 @@ export default defineComponent(({ enabled, name }: Props) => {
             </e:for-each>
         </ul>
     </div>`;
-});
+}
 ```
 
 ### JSX

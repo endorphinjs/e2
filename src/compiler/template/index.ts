@@ -4,6 +4,7 @@ import TemplateFunction, { ctxArg, refsArgs, stageArg } from './TemplateFunction
 import type { TemplateVariable } from './types';
 import traverseTemplate from './traverse';
 import element from './element';
+import type { ENDTemplate, ENDTemplateNode } from '../../parser/ast';
 
 /**
  * Компилирует шаблон указанного компонента, добавляя все созданные функции
@@ -20,9 +21,17 @@ export default function compileTemplate(component: ComponentDeclaration) {
 
     const id = ctx.scope.id(`${component.name}_template`);
     const fn = new TemplateFunction(component, id, [ctxArg, stageArg, refsArgs]);
+
+    compileContents(template, fn);
+
+    ctx.push(fn.render());
+    return id;
+}
+
+function compileContents(node: ENDTemplateNode | ENDTemplate, fn: TemplateFunction) {
     const stack: TemplateVariable[] = [];
 
-    traverseTemplate(template, {
+    traverseTemplate(node, {
         enter(node) {
             if (node.type === 'ENDElement') {
                 stack.push(element(fn, node, last(stack)));
@@ -34,7 +43,4 @@ export default function compileTemplate(component: ComponentDeclaration) {
             }
         }
     });
-
-    ctx.push(fn.render());
-    return id;
 }

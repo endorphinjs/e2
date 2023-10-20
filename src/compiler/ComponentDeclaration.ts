@@ -87,7 +87,7 @@ export default class ComponentDeclaration {
     /**
      * Компилирует текущие компонент и записывает все изменения в указанный патчер
      */
-    public compile(patcher: Patcher) {
+    public compile(patcher: Patcher = this.ctx.patcher) {
         const { template, scope } = this;
         if (!template) {
             return;

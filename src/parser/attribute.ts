@@ -97,6 +97,7 @@ function parseAttributeValue(scanner: Scanner): ENDAttributeValue | null {
         return expr;
     }
 
+    // TODO доработать парсинг атрибутов https://github.com/endorphinjs/e2/issues/4
     const start = scanner.getPtr();
     if (eatQuoted(scanner) || scanner.eatWhile(isUnquoted)) {
         const raw = scanner.current();
