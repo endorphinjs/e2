@@ -5,7 +5,18 @@ import Patcher from '../Patcher';
 import type ComponentDeclaration from '../ComponentDeclaration';
 import type Context from '../Context';
 import type { Chunk, TemplateArgument, TemplateFunctionArg, TemplateSymbol, TemplateVariable } from './types';
-import { argument, isTemplateSymbol, variable } from './utils';
+import { argument, isTemplateChunk, isTemplateSymbol, raw, t, variable } from './utils';
+
+interface ExpressionWithMask {
+    code: string;
+    mask: number;
+    maskSymbols: string[];
+}
+
+interface RenderScope {
+    ctx: Context;
+    refs?: TemplateArgument;
+}
 
 export const ctxArg = Symbol('ctx');
 export const stageArg = Symbol('stage');
@@ -94,20 +105,62 @@ export default class TemplateFunction {
      * Возвращает выражение, переписанное таким образом, чтобы переменные,
      * объявленные в фабрике компонента, доставались из скоупа
      */
-    expression(expr: ESTree.Node, symbol: (index: number) => string): string {
+    expression(expr: ESTree.Node, symbol: (index: number, node: ESTree.Node, isComputed?: boolean) => string): string {
         const { component } = this;
         const { code } = component.ctx;
+        const { scope } = component;
         const patcher = new Patcher(code, expr);
+
+        if (expr.type === 'Literal') {
+            return JSON.stringify(expr.value);
+        }
+
         traverse(expr, {
             enter(node) {
                 const index = component.getScopeSlot(node);
                 if (index != null) {
-                    patcher.replace(getIdentifierForScope(node), symbol(index));
+                    const isComputed = node.type === 'Identifier'
+                        ? scope.computed.has(node.name)
+                        : false;
+                    patcher.replace(getIdentifierForScope(node), symbol(index, node, isComputed));
                 }
             }
         });
 
         return patcher.render();
+    }
+
+    /**
+     * Компилирует указанное выражение в контексте указанного скоупа и возвращает
+     * в том числе маску для обновления
+     */
+    expressionWithMask(node: ESTree.Node): ExpressionWithMask {
+        // TODO обработать переполнение маски для index > 31
+        const { ctx } = this.component;
+        let mask = 0;
+        const maskSymbols: string[] = [];
+        const code = this.expression(node, (index, n, isComputed) => {
+            mask |= 1 << index;
+            maskSymbols.push(n.type === 'Identifier' ? n.name : `${index}?`);
+            let result = `${this.scopeSymbol.id}[${index}]`;
+            if (isComputed) {
+                result = `${ctx.useInternal('getComputed')}(${result})`;
+            }
+            return result;
+        });
+
+        return { mask, maskSymbols, code };
+    }
+
+    /**
+     * Вернёт код с проверкой на необходимость выполнять его (dirty check)
+     */
+    dirtyCheck(exprData: ExpressionWithMask, code: Chunk): Chunk {
+        // XXX маска не используется, если символ объявлен за пределами
+        // компонента. Надо ли это учитывать?
+        return exprData.mask
+            ? t`(${this.dirtySymbol} & ${exprData.mask} /* ${raw(exprData.maskSymbols.join(' | '))} */) && ${code}`
+            : code;
     }
 
     before(chunk: Chunk) {
@@ -137,6 +190,7 @@ export default class TemplateFunction {
         const refs = this.args.get(refsArgs);
         const stage = this.args.get(stageArg);
         const { ctx } = this.component;
+        const scope: RenderScope = { ctx, refs };
 
         const args: string[] = [];
         for (const arg of this.args.values()) {
@@ -159,29 +213,36 @@ export default class TemplateFunction {
         }
 
         for (const chunk of this.beforeChunks) {
-            result += `${indent}${renderChunk(ctx, chunk, refs)}`;
+            result += `${indent}${renderChunk(chunk, scope)}`;
         }
 
         if (stage && refs) {
             const stageChunks: string[] = [];
             if (this.mountChunks.length) {
+                const declared = getDeclaredVars(this.mountChunks);
+                let declareCode = '';
+                if (declared.size) {
+                    declareCode = `let ${Array.from(declared).join(', ')};${indent2}`;
+                }
+
                 stageChunks.push(`if (${stage.id} === 1) {${indent2}`
+                    + declareCode
                     + `${refs.id}.length = ${this.refsIndex};${indent2}`
-                    + this.mountChunks.map(c => renderChunk(ctx, c, refs)).join(indent2)
+                    + this.mountChunks.map(c => renderChunk(c, scope)).join(indent2)
                     + `${indent}}`
                 );
             }
 
             if (this.updateChunks.length) {
                 stageChunks.push(`if (${stage.id} === 2) {${indent2}`
-                    + this.updateChunks.map(c => renderChunk(ctx, c, refs)).join(indent2)
+                    + this.updateChunks.map(c => renderChunk(c, scope)).join(indent2)
                     + `${indent}}`
                 );
             }
 
             if (this.unmountChunks.length) {
                 stageChunks.push(`if (${stage.id} === 3) {${indent2}`
-                    + this.unmountChunks.map(c => renderChunk(ctx, c, refs)).join(indent2)
+                    + this.unmountChunks.map(c => renderChunk(c, scope)).join(indent2)
                     + `${indent}}`
                 );
             }
@@ -192,7 +253,7 @@ export default class TemplateFunction {
         }
 
         for (const chunk of this.afterChunks) {
-            result += `${indent}${renderChunk(ctx, chunk, refs)}`;
+            result += `${indent}${renderChunk(chunk, scope)}`;
         }
 
         result += '\n}\n';
@@ -200,14 +261,19 @@ export default class TemplateFunction {
     }
 }
 
-function renderChunk(ctx: Context, chunk: Chunk, refs?: TemplateArgument): string {
+function renderChunk(chunk: Chunk, scope: RenderScope): string {
     if (typeof chunk === 'string') {
         return chunk;
     }
 
-    return chunk.map(c => {
+    const { ctx, refs } = scope;
+    return chunk.value.map(c => {
         if (typeof c === 'string') {
             return c;
+        }
+
+        if (isTemplateChunk(c)) {
+            return renderChunk(c, scope);
         }
 
         if (isTemplateSymbol(c)) {
@@ -252,4 +318,18 @@ function getIdentifierForScope(node: ESTree.Node): ESTree.Node {
 
     console.warn(`Unexpected node type "${node.type}" for scope identifier`);
     return node;
+}
+
+function getDeclaredVars(value: any, vars = new Set<string>()): Set<string> {
+    if (Array.isArray(value)) {
+        for (const chunk of value) {
+            getDeclaredVars(chunk, vars);
+        }
+    } else if (isTemplateChunk(value)) {
+        getDeclaredVars(value.value, vars);
+    } else if (isTemplateSymbol(value) && value.type === 'variable' && value.index === -1) {
+        vars.add(value.id);
+    }
+
+    return vars;
 }

@@ -30,17 +30,11 @@ export default function compileElement(fn: TemplateFunction, elem: ENDElement, p
                 fn.mount(t`${internal('attribute')}(${v}, ${attr.name}, ${value});`);
             }
         } else {
-            // TODO обработать переполнение маски для index > 31
-            let mask = 0;
-            const expr = fn.expression(attr.value, index => {
-                mask |= 1 << index;
-                return `${fn.scopeSymbol.id}[${index}]`;
-            });
-            fn.mount(t`${internal('attribute')}(${v}, ${attr.name}, ${raw(expr)});`);
-            if (mask) {
-                // XXX маска не используется, если символ объявлен за пределами
-                // компонента. Надо ли это учитывать?
-                fn.update(t`(${fn.dirtySymbol} & ${mask}) && ${internal('attribute')}(${v}, ${attr.name}, ${raw(expr)});`);
+            const expr = fn.expressionWithMask(attr.value);
+            const updateCode = t`${internal('attribute')}(${v}, ${attr.name}, ${raw(expr.code)});`;
+            fn.mount(updateCode);
+            if (expr.mask) {
+                fn.update(fn.dirtyCheck(expr, updateCode));
             }
         }
     }

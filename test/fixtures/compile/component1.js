@@ -20,10 +20,14 @@ export function MyComponent({ num }) {
 }
 
 function MyComponent_template(ctx, stage, refs) {
+    const { scope, dirty } = ctx;
     if (stage === 1) {
         refs.length = 1;
         refs[0] = element("div");
         attach(refs[0]);
+        refs[0].innerText = scope[0];
+    } else if (stage === 2) {
+        (dirty & 1 /* num */) && (refs[0].innerText = scope[0]);
     } else if (stage === 3) {
         refs[0].remove();
     }

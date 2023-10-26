@@ -117,3 +117,7 @@ export function setTarget(target: Element | AttachTarget) {
         setTargetPrepend(target);
     }
 }
+
+export function text(value: any) {
+    return document.createTextNode(value);
+}

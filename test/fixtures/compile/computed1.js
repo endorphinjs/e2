@@ -1,4 +1,4 @@
-import { element, attach, createContext, setupContext, getComputed } from 'endorphin/internal';
+import { getComputed, element, attach, createContext, setupContext } from 'endorphin/internal';
 import { html, computed } from './endorphin';
 
 export function Computed1({ firstName, lastName }) {
@@ -17,10 +17,14 @@ export function Computed1({ firstName, lastName }) {
 
 
 function Computed1_template(ctx, stage, refs) {
+    const { scope, dirty } = ctx;
     if (stage === 1) {
         refs.length = 1;
         refs[0] = element("div");
         attach(refs[0]);
+        refs[0].innerText = getComputed(scope[1]);
+    } else if (stage === 2) {
+        (dirty & 2 /* upperFullname */) && (refs[0].innerText = getComputed(scope[1]));
     } else if (stage === 3) {
         refs[0].remove();
     }

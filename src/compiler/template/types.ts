@@ -1,6 +1,5 @@
 import type { InternalSymbols } from '../Context';
 
-export type TemplateChunk = Array<string | TemplateSymbol | unknown>;
 export type Chunk = string | TemplateChunk;
 export type TemplateFunctionArg = symbol | string;
 export type TemplateSymbol = TemplateArgument | TemplateVariable | TemplateRaw | TemplateInternalSymbol;
@@ -24,4 +23,9 @@ export interface TemplateRaw {
 export interface TemplateInternalSymbol {
     type: 'internal';
     value: InternalSymbols;
+}
+
+export interface TemplateChunk {
+    type: 'chunk';
+    value: Array<string | TemplateSymbol | TemplateChunk | unknown>
 }

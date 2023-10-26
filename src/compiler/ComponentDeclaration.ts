@@ -248,7 +248,7 @@ export default class ComponentDeclaration {
         const refs: string[] = [];
         for (const symbol of templateScope.usages.keys()) {
             // Если значение не меняется, ре-рендеринг шаблона не зависит от него
-            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol)) {
+            if (this.scope.updates.has(symbol) || this.scope.computed.has(symbol) || this.scope.props.has(symbol)) {
                 refs.push(symbol);
             }
         }

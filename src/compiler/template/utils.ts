@@ -11,15 +11,18 @@ const templateNodeTypes: Set<string> = new Set([
  * функций
  */
 export function t(strings: TemplateStringsArray, ...expr: any[]): TemplateChunk {
-    const result: TemplateChunk = [];
+    const result: TemplateChunk = {
+        type: 'chunk',
+        value: []
+    };
     for (let i = 0; i < strings.length; i++) {
-        result.push(strings[i]);
+        result.value.push(strings[i]);
         if (i < expr.length) {
             const e = expr[i];
-            if (isTemplateSymbol(e)) {
-                result.push(e);
+            if (isTemplateSymbol(e) || isTemplateChunk(e)) {
+                result.value.push(e);
             } else {
-                result.push(JSON.stringify(e));
+                result.value.push(JSON.stringify(e));
             }
         }
     }
@@ -49,4 +52,8 @@ export function isTemplateSymbol(value: any): value is TemplateSymbol {
 
 export function isTemplateNode(node: ENDStatement): node is ENDTemplateNode {
     return templateNodeTypes.has(node.type);
+}
+
+export function isTemplateChunk(value: any): value is TemplateChunk {
+    return value ? typeof value === 'object' && 'type' in value && value.type === 'chunk' : false;
 }

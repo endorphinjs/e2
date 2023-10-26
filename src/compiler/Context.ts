@@ -10,7 +10,8 @@ import { Logger } from './logger';
 /** Приватные функции модуля */
 export type InternalSymbols = 'createContext' | 'setupContext' | 'finalizeContext' | 'getComputed'
     | 'attach'
-    | 'element' | 'text' | 'attribute';
+    | 'element' | 'text' | 'attribute'
+    | 'IfBlock';
 
 /** Путь к модулю с приватным функциями */
 const internalModule = 'endorphin/internal';
@@ -88,7 +89,7 @@ export default class Context extends Logger {
             prefix += `import { ${imports.join(', ')} } from '${internalModule}';\n`;
         }
 
-        return prefix + this.patcher.render() + this.chunks.map(chunk => '\n\n' + chunk);
+        return prefix + this.patcher.render() + this.chunks.map(chunk => '\n\n' + chunk).join('');
     }
 
     /**
