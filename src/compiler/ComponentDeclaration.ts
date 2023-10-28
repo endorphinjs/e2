@@ -1,9 +1,10 @@
 import type * as ESTree from 'estree';
+import { traverse } from 'estraverse';
 import Context from './Context';
 import Scope from './Scope';
 import Patcher from './Patcher';
 import logger from './logger';
-import { SymbolAnalysisResult, TemplateSource, runSymbolAnalysis } from './analyze';
+import { type SymbolAnalysisResult, type TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
 import parse, { type AST } from '../parser';
 import compileTemplate from './template';
 import compileEventHandler from './template/event';
@@ -127,6 +128,8 @@ export default class ComponentDeclaration {
         this.propsUpdate(patcher);
 
         // TODO сгенерировать код для эффектов
+
+        this.finalizeComponent(patcher);
     }
 
     /**
@@ -259,7 +262,7 @@ export default class ComponentDeclaration {
     }
 
     /**
-     * Возвращает код функции обновления пропсов
+     * Записывает код обновления пропсов вместо шаблона компонента
      */
     private propsUpdate(patcher: Patcher) {
         const { ast } = this.templateSource!;
@@ -356,6 +359,28 @@ export default class ComponentDeclaration {
         }
 
         return { bits, symbols };
+    }
+
+    /**
+     * Финализация компонента
+     */
+    private finalizeComponent(patcher: Patcher) {
+        const { ctx } = this;
+        traverse(this.node.body, {
+            enter(node) {
+                if (isFunctionDeclaration(node)) {
+                    return this.skip();
+                }
+
+                if (node.type === 'ReturnStatement') {
+                    if (node.argument) {
+                        patcher.wrap(node.argument, `${ctx.useInternal('finalizeContext')}(`, ')');
+                    } else {
+                        patcher.append(node.end, ` ${ctx.useInternal('finalizeContext')}()`);
+                    }
+                }
+            }
+        });
     }
 }
 

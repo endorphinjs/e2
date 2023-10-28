@@ -1,4 +1,4 @@
-import { getComputed, text, attach, element, IfBlock, createContext, setupContext } from 'endorphin/internal';
+import { getComputed, text, attach, element, IfBlock, createContext, setupContext, finalizeContext } from 'endorphin/internal';
 import { html, computed } from './endorphin';
 
 export function IfComponent1({ name, enabled }) {
@@ -6,7 +6,7 @@ export function IfComponent1({ name, enabled }) {
     const upperName = computed(() => name.toUpperCase(), [2], 0);
 
     setupContext([upperName, enabled, name], IfComponent1_template, 3 /* upperName | enabled */);
-    return (nextProps) => { invalidate(2, name = nextProps.name);invalidate(1, enabled = nextProps.enabled) };
+    return finalizeContext((nextProps) => { invalidate(2, name = nextProps.name);invalidate(1, enabled = nextProps.enabled) });
 }
 
 

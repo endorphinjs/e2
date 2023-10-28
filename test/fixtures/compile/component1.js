@@ -1,4 +1,4 @@
-import { element, attach, createContext, setupContext } from 'endorphin/internal';
+import { element, attach, createContext, setupContext, finalizeContext } from 'endorphin/internal';
 import { html } from './endorphin';
 
 let outer = 1;
@@ -16,7 +16,7 @@ export function MyComponent({ num }) {
 
     function onMousedown() { inner++ }
     setupContext([num, update, onMousedown], MyComponent_template, 1 /* num */);
-    return (nextProps) => { invalidate(0, num = nextProps.num) };
+    return finalizeContext((nextProps) => { invalidate(0, num = nextProps.num) });
 }
 
 function MyComponent_template(ctx, stage, refs) {

@@ -26,6 +26,7 @@ const contextStack: Array<RenderContext | null> = [];
 export function createContext(): InvalidateHandler {
     contextStack.push(context);
     const ctx = context = new RenderContext();
+    const { scope } = ctx;
 
     return (index, value, nextValue = value) => {
         // NB: контракт value + nextValue нужен для выражений типа
@@ -33,7 +34,6 @@ export function createContext(): InvalidateHandler {
         // const a = b++;
         // В этом случае b == 2, но а == 1, так как из выражения
         // b++ вернётся предыдущее значение
-        const { scope } = ctx;
         if (scope![index] !== nextValue) {
             scope![index] = nextValue;
             ctx.invalidateComputed(index);

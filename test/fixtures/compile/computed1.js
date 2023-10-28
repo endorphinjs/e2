@@ -1,4 +1,4 @@
-import { getComputed, element, attach, createContext, setupContext } from 'endorphin/internal';
+import { getComputed, element, attach, createContext, setupContext, finalizeContext } from 'endorphin/internal';
 import { html, computed } from './endorphin';
 
 export function Computed1({ firstName, lastName }) {
@@ -12,7 +12,7 @@ export function Computed1({ firstName, lastName }) {
     }
 
     setupContext([onClick, upperFullname, firstName, lastName], Computed1_template, 2 /* upperFullname */);
-    return (nextProps) => { invalidate(2, firstName = nextProps.firstName);invalidate(3, lastName = nextProps.lastName) };
+    return finalizeContext((nextProps) => { invalidate(2, firstName = nextProps.firstName);invalidate(3, lastName = nextProps.lastName) });
 }
 
 
