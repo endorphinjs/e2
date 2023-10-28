@@ -38,7 +38,7 @@ function IfComponent1_template(ctx, stage, refs) {
         refs[1] = text(getComputed(scope[0]));
         refs[0].appendChild(refs[1]);
         refs[0].appendChild(text("\n        "));
-        refs[2] = new IfBlock(ctx, "IfComponent1_if", scope[1]);
+        refs[2] = new IfBlock(ctx, IfComponent1_if, scope[1]);
         refs[0].appendChild(text("\n    "));
     } else if (stage === 2) {
         (dirty & 1 /* upperName */) && (refs[1].nodeValue = getComputed(scope[0]));

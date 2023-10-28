@@ -68,7 +68,7 @@ function ifStatement(component: ComponentDeclaration, node: ENDIfStatement, fn: 
     const expr = fn.expressionWithMask(node.test);
 
     // Добавляем блок в родительскую функцию
-    fn.mount(t`${v} = new ${internal('IfBlock')}(${fn.argument(ctxArg)}, ${id}, ${raw(expr.code)});`);
+    fn.mount(t`${v} = new ${internal('IfBlock')}(${fn.argument(ctxArg)}, ${raw(id)}, ${raw(expr.code)});`);
     fn.update(fn.dirtyCheck(expr, t`${v}.render(${raw(expr.code)});`));
     fn.unmount(t`${v}.unmount();`);
 
