@@ -19,10 +19,69 @@ const defaultOptions: EndorphinContextOptions = {
  */
 export default class EndorphinContext {
     private options: EndorphinContextOptions;
+    private extractedSymbols: Set<string>;
 
-    constructor(ast?: ESTree.Program) {
+    /**
+     * @param {ESTree.Node} ast - Абстрактное синтаксическое дерево (AST) программы.
+     */
+    constructor(ast?: ESTree.Node) {
         this.options = { ...defaultOptions };
-        // TODO извлечь названия символов из AST
+        this.extractedSymbols = new Set();
+        if (ast) {
+            this.extractSymbolsFromAST(ast);
+        }
+    }
+
+    /**
+     * Извлекает символы из AST.
+     * @param {ESTree.Node} node - Узел AST.
+     */
+    private extractSymbolsFromAST(node: ESTree.Node) {
+        if (node.type === 'ImportDeclaration') {
+            this.processImportDeclaration(node);
+        }
+
+        if ('body' in node) {
+            if (Array.isArray(node.body)) {
+                for (const statement of node.body) {
+                    this.extractSymbolsFromAST(statement);
+                }
+            } else if (node.body && node.body.type) {
+                this.extractSymbolsFromAST(node.body);
+            }
+        }
+    }
+
+    /**
+     * Обрабатывает узел импорта в AST и извлекает символы.
+     * @param {ESTree.ImportDeclaration} node - Узел импорта в AST.
+     */
+    private processImportDeclaration(node: ESTree.ImportDeclaration) {
+        const { specifiers } = node;
+
+        for (const specifier of specifiers) {
+            if (specifier.type === 'ImportSpecifier') {
+                const localName = specifier.local.name;
+                this.registerSymbol(localName);
+            }
+        }
+    }
+
+    /**
+     * Регистрирует символ в наборе извлеченных символов.
+     * @param {string} localName - Локальное имя символа.
+     */
+    private registerSymbol(localName: string) {
+        this.extractedSymbols.add(localName);
+    }
+
+    /**
+     * Проверяет, является ли символ компонентом.
+     * @param {string} symbol - Имя символа.
+     * @returns {boolean} Возвращает true, если символ является компонентом, иначе false.
+     */
+    isComponentSymbol(symbol: string): boolean {
+        return this.extractedSymbols.has(symbol);
     }
 
     /**
