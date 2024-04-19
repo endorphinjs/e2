@@ -1,4 +1,5 @@
 import type { ENDElement } from '../../parser/ast';
+import NodeTreeLookup from './NodeTreeLookup';
 import type TemplateFunction from './TemplateFunction';
 import type { TemplateVariable } from './types';
 import { internal, isTemplateNode, raw, t } from './utils';
@@ -7,7 +8,8 @@ import { internal, isTemplateNode, raw, t } from './utils';
  * Компиляция DOM-элемента: генерирует код, необходимый для создания, обновления
  * и удаления указанного элемента
  */
-export default function compileElement(fn: TemplateFunction, elem: ENDElement, parent?: TemplateVariable): TemplateVariable {
+export default function compileElement(fn: TemplateFunction, elem: ENDElement, lookup: NodeTreeLookup): TemplateVariable {
+    const parent = lookup.getParentVar(elem);
     const v = !parent || requiresUpdate(elem)
         ? fn.ref(elem.name) : fn.id(elem.name);
 

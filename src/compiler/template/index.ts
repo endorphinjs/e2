@@ -1,11 +1,11 @@
-import { last } from '../../shared/utils';
 import type ComponentDeclaration from '../ComponentDeclaration';
 import TemplateFunction, { ctxArg, refsArgs, stageArg } from './TemplateFunction';
 import type { TemplateVariable } from './types';
-import traverseTemplate, { TemplateNode } from './traverse';
+import traverseTemplate from './traverse';
 import element from './element';
 import type { ENDContent, ENDIfStatement, ENDStatement, ENDTemplate } from '../../parser/ast';
 import { internal, isTemplateNode, raw, t } from './utils';
+import NodeTreeLookup from './NodeTreeLookup';
 
 /**
  * Компилирует шаблон указанного компонента, добавляя все созданные функции
@@ -30,28 +30,29 @@ export default function compileTemplate(component: ComponentDeclaration) {
 }
 
 function compileContents(component: ComponentDeclaration, node: ENDStatement | ENDTemplate, fn: TemplateFunction) {
-    const stack: TemplateVariable[] = [];
+    const lookup = new NodeTreeLookup();
+
+    // TODO Собирать древовидную структуру, чтобы для блоков (if, for-each)
+    // можно было получить точку монтирования
 
     traverseTemplate(node, {
         enter(node, parent) {
+            lookup.set(node, parent);
+
             if (node.type === 'ENDTemplate' || isTemplateNode(node)) {
                 switch (node.type) {
                     case 'ENDElement':
-                        stack.push(element(fn, node, last(stack)));
+                        lookup.setVar(node, element(fn, node, lookup));
                         break;
                     case 'ENDIfStatement':
-                        ifStatement(component, node, fn);
+                        lookup.setVar(node, ifStatement(component, node, fn, lookup));
                         return this.skip();
                 }
             } else {
                 // Компиляция выражения как текста
                 // TODO отсекать текст, который отвечает только за форматирование
-                text(fn, node, parent, last(stack));
-            }
-        },
-        leave(node) {
-            if (node.type === 'ENDElement') {
-                stack.pop();
+                lookup.setVar(node, text(fn, node, lookup));
+                return this.skip();
             }
         }
     });
@@ -60,12 +61,20 @@ function compileContents(component: ComponentDeclaration, node: ENDStatement | E
 /**
  * Компиляция блока <if>
  */
-function ifStatement(component: ComponentDeclaration, node: ENDIfStatement, fn: TemplateFunction) {
+function ifStatement(component: ComponentDeclaration, node: ENDIfStatement, fn: TemplateFunction, lookup: NodeTreeLookup): TemplateVariable {
     const { ctx } = component;
 
     const id = ctx.scope.id(`${component.name}_if`);
     const v = fn.ref('ifBlock');
     const expr = fn.expressionWithMask(node.test);
+
+    // Указываем точку монтирования, если надо
+    const parent = lookup.getParent(node);
+    if (parent) {
+        const entry = lookup.data.get(parent)!;
+        // const index = entry.
+
+    }
 
     // Добавляем блок в родительскую функцию
     fn.mount(t`${v} = new ${internal('IfBlock')}(${fn.argument(ctxArg)}, ${raw(id)}, ${raw(expr.code)});`);
@@ -78,13 +87,16 @@ function ifStatement(component: ComponentDeclaration, node: ENDIfStatement, fn: 
     }
 
     ctx.push(ifBlock.render());
+    return v;
 }
 
 /**
  * Компиляция текстового узла
  */
-function text(fn: TemplateFunction, node: ENDContent, parent?: TemplateNode | null, parentVar?: TemplateVariable) {
+function text(fn: TemplateFunction, node: ENDContent, lookup: NodeTreeLookup): TemplateVariable | undefined {
     const expr = fn.expressionWithMask(node);
+    const parent = lookup.getParent(node);
+    const parentVar = lookup.getParentVar(node);
 
     if (parentVar && parent?.type === 'ENDElement' && parent.body.length === 1) {
         // Это выражение — единственный потомок элемента, будем его обновлять
@@ -111,5 +123,7 @@ function text(fn: TemplateFunction, node: ENDContent, parent?: TemplateNode | nu
         if (expr.mask) {
             fn.update(fn.dirtyCheck(expr, t`(${v}.nodeValue = ${raw(expr.code)});`));
         }
+
+        return v;
     }
 }
