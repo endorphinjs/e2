@@ -288,6 +288,10 @@ function handleIdentifier(scope: Scope, node: ESTree.Identifier, parents: ESTree
     }
 }
 
+export function isVariableDeclaration(node: ESTree.Node): node is ESTree.VariableDeclaration {
+    return node.type === 'VariableDeclaration';
+}
+
 function declareOrAssign(node: ESTree.Node): node is ESTree.VariableDeclaration | ESTree.AssignmentExpression | ESTree.UpdateExpression {
     return node.type === 'VariableDeclaration'
         || node.type === 'AssignmentExpression'

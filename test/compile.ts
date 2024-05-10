@@ -44,4 +44,14 @@ test('if1.js', async () => {
     same(ctx.render(), await read('./fixtures/compile/if1.js'));
 });
 
+test('const-to-let.js', async () => {
+    const file = await read('./samples/const-to-let.js');
+    const ctx = new Context(file);
+    const component = ctx.getComponents()[0];
+    const decl = new ComponentDeclaration(ctx, component);
+    decl.compile(ctx.patcher);
+
+    same(ctx.render(), await read('./fixtures/compile/const-to-let.js'));
+});
+
 test.run();
