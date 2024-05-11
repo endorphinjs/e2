@@ -4,7 +4,13 @@ import Context from './Context';
 import Scope from './Scope';
 import Patcher from './Patcher';
 import logger from './logger';
-import { type SymbolAnalysisResult, type TemplateSource, isFunctionDeclaration, runSymbolAnalysis } from './analyze';
+import {
+    type SymbolAnalysisResult,
+    type TemplateSource,
+    isFunctionDeclaration,
+    runSymbolAnalysis,
+    isVariableDeclaration
+} from './analyze';
 import parse, { type AST } from '../parser';
 import compileTemplate from './template';
 import compileEventHandler from './template/event';
@@ -277,6 +283,7 @@ export default class ComponentDeclaration {
                     break;
                 case 'prop':
                     chunk = `${symbol} = ${nextPropsArg}.${propName}`;
+                    this.patchVariableDeclaration(patcher, this.scope.declarations.get(symbol))
                     break;
                 case 'rest':
                     // TODO поддержать rect-аргумент
@@ -381,6 +388,18 @@ export default class ComponentDeclaration {
                 }
             }
         });
+    }
+
+    private patchVariableDeclaration(patcher: Patcher, node?: ESTree.Node) {
+        if (!node || !isVariableDeclaration(node)) {
+            return
+        }
+        if (node.kind === 'const') {
+            patcher.replace({
+                start: node.start,
+                end: node.start + 5
+            }, `let`);
+        }
     }
 }
 
